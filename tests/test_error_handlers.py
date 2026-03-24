@@ -4,7 +4,7 @@ import pytest
 from fastapi import APIRouter
 from httpx import ASGITransport, AsyncClient
 
-from app.core.exceptions import BadRequestException, NotFoundException
+from app.core.errors import BadRequestError, NotFoundError
 from app.main import create_app
 
 
@@ -16,11 +16,11 @@ def _make_client_with_error_routes() -> AsyncClient:
 
     @error_router.get("/not-found")
     async def raise_not_found() -> None:
-        raise NotFoundException("thing not found")
+        raise NotFoundError("thing not found")
 
     @error_router.get("/bad-request")
     async def raise_bad_request() -> None:
-        raise BadRequestException("invalid input")
+        raise BadRequestError("invalid input")
 
     @error_router.get("/unhandled")
     async def raise_unhandled() -> None:
@@ -35,8 +35,8 @@ def _make_client_with_error_routes() -> AsyncClient:
 
 
 @pytest.mark.asyncio
-async def test_not_found_exception():
-    """Verify NotFoundException returns 404 with structured error body."""
+async def test_not_found_exception() -> None:
+    """Verify NotFoundError returns 404 with structured error body."""
     async with _make_client_with_error_routes() as client:
         response = await client.get("/api/v1/test-errors/not-found")
         assert response.status_code == 404
@@ -47,8 +47,8 @@ async def test_not_found_exception():
 
 
 @pytest.mark.asyncio
-async def test_bad_request_exception():
-    """Verify BadRequestException returns 400 with structured error body."""
+async def test_bad_request_exception() -> None:
+    """Verify BadRequestError returns 400 with structured error body."""
     async with _make_client_with_error_routes() as client:
         response = await client.get("/api/v1/test-errors/bad-request")
         assert response.status_code == 400
@@ -58,7 +58,7 @@ async def test_bad_request_exception():
 
 
 @pytest.mark.asyncio
-async def test_unhandled_exception_returns_safe_500():
+async def test_unhandled_exception_returns_safe_500() -> None:
     """Verify unhandled exceptions return 500 without leaking internals."""
     async with _make_client_with_error_routes() as client:
         response = await client.get("/api/v1/test-errors/unhandled")

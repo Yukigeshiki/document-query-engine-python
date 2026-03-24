@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.error_handlers import register_error_handlers
 from app.core.logging import setup_logging
 from app.core.middleware import RequestContextMiddleware
+from app.services.knowledge_graph import KnowledgeGraphService
 
 logger = structlog.stdlib.get_logger(__name__)
 
@@ -21,6 +22,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Handle application startup and shutdown events."""
     setup_logging()
     logger.info("starting", app_name=settings.app_name, version=settings.app_version)
+    _app.state.kg_service = KnowledgeGraphService(settings)
     yield
     logger.info("shutting_down", app_name=settings.app_name)
 

@@ -22,5 +22,15 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = ["*"]
 
+    # OpenAI
+    openai_api_key: str = ""
+
+    # LlamaIndex
+    llm_model: str = "gpt-4o-mini"
+    llm_temperature: float = 0.0
+    embedding_model: str = "text-embedding-3-small"
+    max_triplets_per_chunk: int = 10
+    chunk_size: int = 1024
+
 
 settings = Settings()

@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from starlette.responses import JSONResponse
 
-from app.core.exceptions import AppException
+from app.core.errors import AppError
 from app.models.errors import ErrorResponse
 
 logger = structlog.stdlib.get_logger(__name__)
@@ -14,9 +14,9 @@ logger = structlog.stdlib.get_logger(__name__)
 def register_error_handlers(app: FastAPI) -> None:
     """Register all global exception handlers on the application."""
 
-    @app.exception_handler(AppException)
+    @app.exception_handler(AppError)
     async def handle_app_exception(
-        request: Request, exc: AppException
+        request: Request, exc: AppError
     ) -> JSONResponse:
         """Handle known application exceptions with structured responses."""
         logger.warning(
