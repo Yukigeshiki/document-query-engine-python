@@ -15,7 +15,8 @@ dependencies = [
     "structlog (>=25.5.0,<26.0.0)",
     "llama-index-core (>=0.14.18,<0.15.0)",
     "llama-index-llms-openai (>=0.7.3,<0.8.0)",
-    "llama-index-embeddings-openai (>=0.6.0,<0.7.0)"
+    "llama-index-embeddings-openai (>=0.6.0,<0.7.0)",
+    "llama-index-graph-stores-neo4j (>=0.7.0,<0.8.0)"
 ]
 
 
@@ -42,6 +43,7 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
+ignore = ["B008"]  # Depends() and Query() in FastAPI signatures are intentional
 
 [tool.mypy]
 python_version = "3.12"

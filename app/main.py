@@ -24,6 +24,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     logger.info("starting", app_name=settings.app_name, version=settings.app_version)
     _app.state.kg_service = KnowledgeGraphService(settings)
     yield
+    _app.state.kg_service.close()
     logger.info("shutting_down", app_name=settings.app_name)
 
 

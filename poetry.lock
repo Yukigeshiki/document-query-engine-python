@@ -1276,6 +1276,22 @@ llama-index-core = ">=0.13.0,<0.15"
 openai = ">=1.1.0"
 
 [[package]]
+name = "llama-index-graph-stores-neo4j"
+version = "0.7.0"
+description = "llama-index graph stores neo4j integration"
+optional = false
+python-versions = "<4.0,>=3.10"
+groups = ["main"]
+files = [
+    {file = "llama_index_graph_stores_neo4j-0.7.0-py3-none-any.whl", hash = "sha256:ab250e8825f6f883751fb21fecdd26652cd27faccfabe6c17894a2cb7b2896b8"},
+    {file = "llama_index_graph_stores_neo4j-0.7.0.tar.gz", hash = "sha256:abe4bb348c652005d1ef970dec8512dae6582c50d83bbaf59ce2d53031e66120"},
+]
+
+[package.dependencies]
+llama-index-core = ">=0.13.0,<0.15"
+neo4j = ">=5.16.0,<6"
+
+[[package]]
 name = "llama-index-instrumentation"
 version = "0.5.0"
 description = "Instrumentation and Observability for LlamaIndex"
@@ -1675,6 +1691,26 @@ files = [
     {file = "mypy_extensions-1.1.0-py3-none-any.whl", hash = "sha256:1be4cccdb0f2482337c4743e60421de3a356cd97508abadd57d47403e94f5505"},
     {file = "mypy_extensions-1.1.0.tar.gz", hash = "sha256:52e68efc3284861e772bbcd66823fde5ae21fd2fdb51c62a211403730b916558"},
 ]
+
+[[package]]
+name = "neo4j"
+version = "5.28.3"
+description = "Neo4j Bolt driver for Python"
+optional = false
+python-versions = ">=3.7"
+groups = ["main"]
+files = [
+    {file = "neo4j-5.28.3-py3-none-any.whl", hash = "sha256:dbf6d9211b861bc3dd62dccbf8a74d1e33e0c602084dd123b753edf46e1fdfad"},
+    {file = "neo4j-5.28.3.tar.gz", hash = "sha256:0625aaaf0963bc99a7231e946952f579792c3be22687192b20e0b74aa1233a2b"},
+]
+
+[package.dependencies]
+pytz = "*"
+
+[package.extras]
+numpy = ["numpy (>=1.7.0,<3.0.0)"]
+pandas = ["numpy (>=1.7.0,<3.0.0)", "pandas (>=1.1.0,<3.0.0)"]
+pyarrow = ["pyarrow (>=1.0.0)"]
 
 [[package]]
 name = "nest-asyncio"
@@ -2397,6 +2433,18 @@ files = [
 
 [package.extras]
 cli = ["click (>=5.0)"]
+
+[[package]]
+name = "pytz"
+version = "2026.1.post1"
+description = "World timezone definitions, modern and historical"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "pytz-2026.1.post1-py2.py3-none-any.whl", hash = "sha256:f2fd16142fda348286a75e1a524be810bb05d444e5a081f37f7affc635035f7a"},
+    {file = "pytz-2026.1.post1.tar.gz", hash = "sha256:3378dde6a0c3d26719182142c56e60c7f9af7e968076f31aae569d72a0358ee1"},
+]
 
 [[package]]
 name = "pyyaml"
@@ -3542,4 +3590,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<4.0"
-content-hash = "a02c14665aee8556fdee930d3f5afb64cfd2b7008e595caf07a4634f686fee7d"
+content-hash = "24dc9b4f20d3a73e2e60063afbd47356c38d5177b52f4c0113313a02829235f5"

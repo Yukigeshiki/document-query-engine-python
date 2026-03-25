@@ -56,7 +56,7 @@ poetry run mypy .
 - **Modern Python syntax**: Use `list[str]` not `List[str]`, etc.
 - **Imports**: Always at the top of the file, sorted by isort (via ruff). No inline imports unless absolutely necessary.
 - **API routes**: Use `APIRouter`, grouped under `api/v1/`
-- **Models**: Pydantic `BaseModel` for all request/response schemas
+- **Models**: Inherit from `CamelModel` (in `app/models/__init__.py`), not `BaseModel` directly. JSON serialization is camelCase for the Kotlin agent; Python code stays snake_case. Use `by_alias=True` when calling `model_dump()` manually.
 - **Config**: Environment variables loaded via Pydantic-Settings from `.env`
 - **Logging**: Use structlog, not `print()` or stdlib `logging` directly
 - **Docstrings**: PEP 257 — all public modules, classes, functions, and methods must have docstrings. Use triple double quotes. One-line for simple cases, multi-line with summary + blank line + description for complex ones.

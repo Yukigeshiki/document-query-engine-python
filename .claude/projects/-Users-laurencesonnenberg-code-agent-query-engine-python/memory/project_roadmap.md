@@ -8,18 +8,18 @@ Building a LlamaIndex-based Knowledge Graph query engine as a Python/FastAPI mic
 
 **Why:** The Kotlin agent needs access to large amounts of data via a knowledge graph. LlamaIndex excels at KG indexing and multi-document synthesis. Python sidecar is justified by the KG complexity.
 
-**How to apply:** All 16 roadmap items build toward this architecture. Item #1 (structured logging) is complete. Next up is #2 (request/response middleware).
+**How to apply:** All 16 roadmap items build toward this architecture.
 
-## Roadmap Status (as of 2026-03-24)
+## Roadmap Status (as of 2026-03-25)
 1. ~~Structured Logging with structlog~~ — DONE
-2. Request/Response Middleware — pending
-3. Error Handling Framework — pending
-4. LlamaIndex Core Integration — pending
-5. Neo4j Graph Store — pending
+2. ~~Request/Response Middleware~~ — DONE
+3. ~~Error Handling Framework~~ — DONE
+4. ~~LlamaIndex Core Integration~~ — DONE
+5. ~~Neo4j Graph Store~~ — DONE
 6. Dependency Injection — pending
 7. Document Connectors & Ingestion Pipeline — pending
 8. Background Task Processing — pending
-9. Hybrid Retrieval (KG + Vector) — pending
+9. Hybrid Retrieval (KG + Vector) + Index Persistence — pending
 10. Authentication & API Key Management — pending
 11. Rate Limiting — pending
 12. Caching Layer — pending

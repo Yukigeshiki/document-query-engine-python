@@ -32,5 +32,12 @@ class Settings(BaseSettings):
     max_triplets_per_chunk: int = 10
     chunk_size: int = 1024
 
+    # Neo4j
+    neo4j_uri: str = ""
+    neo4j_username: str = ""
+    neo4j_password: str = ""
+    neo4j_database: str = ""
+    neo4j_enabled: bool = True
+
 
 settings = Settings()

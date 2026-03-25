@@ -1,9 +1,9 @@
 """Error response models."""
 
-from pydantic import BaseModel
+from app.models import CamelModel
 
 
-class ErrorResponse(BaseModel):
+class ErrorResponse(CamelModel):
     """Consistent error response returned by all exception handlers."""
 
     error: str

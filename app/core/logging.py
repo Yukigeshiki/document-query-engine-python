@@ -52,3 +52,4 @@ def setup_logging() -> None:
     root_logger.setLevel(level)
 
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    logging.getLogger("neo4j").setLevel(logging.WARNING)

@@ -33,7 +33,7 @@ def register_error_handlers(app: FastAPI) -> None:
         )
         return JSONResponse(
             status_code=exc.status_code,
-            content=body.model_dump(exclude_none=True),
+            content=body.model_dump(by_alias=True, exclude_none=True),
         )
 
     @app.exception_handler(RequestValidationError)
@@ -51,5 +51,7 @@ def register_error_handlers(app: FastAPI) -> None:
             code="validation_error",
             detail=str(exc.errors()),
         )
-        return JSONResponse(status_code=422, content=body.model_dump())
+        return JSONResponse(
+            status_code=422, content=body.model_dump(by_alias=True)
+        )
 
