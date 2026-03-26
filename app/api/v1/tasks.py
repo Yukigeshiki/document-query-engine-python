@@ -2,8 +2,10 @@
 
 import structlog
 from celery.result import AsyncResult
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
+from app.core.config import settings
+from app.core.rate_limit import limiter
 from app.models.tasks import TaskCancelledResponse, TaskStatus, TaskStatusResponse
 from app.worker.celery_app import celery_app
 
@@ -22,7 +24,8 @@ _STATUS_MAP: dict[str, TaskStatus] = {
 
 
 @router.get("/{task_id}", response_model=TaskStatusResponse)
-async def get_task_status(task_id: str) -> TaskStatusResponse:
+@limiter.limit(settings.rate_limit_default)
+async def get_task_status(request: Request, task_id: str) -> TaskStatusResponse:
     """Poll the status of a background task."""
     result = AsyncResult(task_id, app=celery_app)
 
@@ -45,7 +48,8 @@ async def get_task_status(task_id: str) -> TaskStatusResponse:
 
 
 @router.delete("/{task_id}", response_model=TaskCancelledResponse)
-async def cancel_task(task_id: str) -> TaskCancelledResponse:
+@limiter.limit(settings.rate_limit_default)
+async def cancel_task(request: Request, task_id: str) -> TaskCancelledResponse:
     """Cancel a pending or running background task."""
     celery_app.control.revoke(task_id, terminate=True)
     logger.info("task_cancelled", task_id=task_id)

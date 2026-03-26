@@ -3,9 +3,11 @@
 from typing import Literal
 
 import structlog
-from fastapi import APIRouter, Depends, Query, UploadFile
+from fastapi import APIRouter, Depends, Query, Request, UploadFile
 
+from app.core.config import settings
 from app.core.errors import ServiceUnavailableError
+from app.core.rate_limit import limiter
 from app.dependencies import get_kg_service, get_upload_service
 from app.models.knowledge_graph import (
     IngestRequest,
@@ -26,7 +28,9 @@ router = APIRouter(prefix="/kg", tags=["knowledge-graph"])
 
 
 @router.post("/ingest", response_model=IngestResponse)
+@limiter.limit(settings.rate_limit_ingest)
 async def ingest_document(
+    request: Request,
     body: IngestRequest,
     service: KnowledgeGraphService = Depends(get_kg_service),
 ) -> IngestResponse:
@@ -43,7 +47,9 @@ async def ingest_document(
     response_model=SourceIngestAcceptedResponse,
     status_code=202,
 )
+@limiter.limit(settings.rate_limit_ingest)
 async def ingest_from_source(
+    request: Request,
     body: SourceIngestRequest,
 ) -> SourceIngestAcceptedResponse:
     """
@@ -69,7 +75,9 @@ async def ingest_from_source(
     response_model=SourceIngestAcceptedResponse,
     status_code=202,
 )
+@limiter.limit(settings.rate_limit_ingest)
 async def ingest_upload(
+    request: Request,
     file: UploadFile,
     upload_service: UploadService = Depends(get_upload_service),
 ) -> SourceIngestAcceptedResponse:
@@ -92,7 +100,9 @@ async def ingest_upload(
 
 
 @router.get("/query", response_model=QueryResponse)
+@limiter.limit(settings.rate_limit_query)
 async def query_knowledge_graph(
+    request: Request,
     query: str = Query(..., min_length=1, description="Natural language query"),
     include_text: bool = Query(default=True),
     response_mode: Literal[
@@ -112,7 +122,9 @@ async def query_knowledge_graph(
 
 
 @router.get("/subgraph", response_model=SubgraphResponse)
+@limiter.limit(settings.rate_limit_default)
 async def get_subgraph(
+    request: Request,
     entity: str = Query(..., min_length=1, description="Entity to center the subgraph on"),
     depth: int = Query(default=2, ge=1, le=5, description="Traversal depth"),
     service: KnowledgeGraphService = Depends(get_kg_service),

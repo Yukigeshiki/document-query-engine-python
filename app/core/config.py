@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     # Uploads
     upload_storage: str = ""
 
+    # Rate limiting
+    rate_limit_default: str = "60/minute"
+    rate_limit_query: str = "30/minute"
+    rate_limit_ingest: str = "10/minute"
+
     # Celery
     celery_broker_url: str = ""
 

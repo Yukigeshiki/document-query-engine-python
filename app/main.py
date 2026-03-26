@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi.errors import RateLimitExceeded
 
 from app.api.v1.router import api_router
 from app.connectors.setup import register_default_connectors
@@ -13,6 +14,7 @@ from app.core.config import settings
 from app.core.error_handlers import register_error_handlers
 from app.core.logging import setup_logging
 from app.core.middleware import RequestContextMiddleware
+from app.core.rate_limit import limiter, rate_limit_exceeded_handler
 from app.services.knowledge_graph import KnowledgeGraphService
 from app.services.upload import UploadService
 
@@ -53,8 +55,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    app.state.limiter = limiter
     app.include_router(api_router)
     register_error_handlers(app)
+    app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
     return app
 
