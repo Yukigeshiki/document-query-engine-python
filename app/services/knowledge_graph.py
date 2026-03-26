@@ -1,9 +1,11 @@
 """Knowledge graph service backed by LlamaIndex KnowledgeGraphIndex."""
 
 import asyncio
+import hashlib
 import uuid
 from functools import partial
 from typing import Any
+from urllib.parse import urlparse
 
 import structlog
 from llama_index.core import (
@@ -11,25 +13,37 @@ from llama_index.core import (
     KnowledgeGraphIndex,
     Settings,
     StorageContext,
+    VectorStoreIndex,
+    load_index_from_storage,
 )
 from llama_index.core.graph_stores.simple import SimpleGraphStore
 from llama_index.core.graph_stores.types import GraphStore
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.query_engine import RetrieverQueryEngine
+from llama_index.core.response_synthesizers import get_response_synthesizer
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.graph_stores.neo4j import Neo4jGraphStore
 from llama_index.llms.openai import OpenAI
+from llama_index.storage.docstore.postgres import PostgresDocumentStore
+from llama_index.storage.index_store.postgres import PostgresIndexStore
+from llama_index.vector_stores.postgres import PGVectorStore
 
 from app.core.config import Settings as AppSettings
 from app.core.errors import IngestionError, QueryError, ServiceUnavailableError
-from app.models.knowledge_graph import SourceNodeInfo, SubgraphEdge, SubgraphNode
+from app.models.knowledge_graph import RetrievalMode, SourceNodeInfo, SubgraphEdge, SubgraphNode
+from app.services.dual_retriever import DualRetriever
 
 logger = structlog.stdlib.get_logger(__name__)
 
+KG_INDEX_ID = "kg_index"
+VECTOR_INDEX_ID = "vector_index"
+
 
 class KnowledgeGraphService:
-    """Manages a LlamaIndex KnowledgeGraphIndex with Neo4j or in-memory graph store."""
+    """Manages KG and vector indexes with Neo4j, PostgreSQL, or in-memory stores."""
 
     def __init__(self, config: AppSettings) -> None:
-        """Initialize LlamaIndex settings, graph store, and index."""
+        """Initialize LlamaIndex settings, stores, and indexes."""
         logger.info(
             "initializing_knowledge_graph_service",
             llm_model=config.llm_model,
@@ -48,22 +62,19 @@ class KnowledgeGraphService:
         Settings.chunk_size = config.chunk_size
 
         self._neo4j_enabled = config.neo4j_enabled
+        self._postgres_enabled = config.postgres_enabled
         self._graph_store: GraphStore = self._create_graph_store(config)
-
-        self._storage_context = StorageContext.from_defaults(
-            graph_store=self._graph_store,
-        )
+        self._storage_context = self._create_storage_context(config)
         self._max_triplets = config.max_triplets_per_chunk
+        self._vector_top_k = config.vector_top_k
 
-        self._index = KnowledgeGraphIndex(
-            nodes=[],
-            storage_context=self._storage_context,
-            max_triplets_per_chunk=self._max_triplets,
-        )
+        self._index = self._load_or_create_kg_index()
+        self._vector_index = self._load_or_create_vector_index()
 
         logger.info(
             "knowledge_graph_service_initialized",
-            backend="neo4j" if self._neo4j_enabled else "in_memory",
+            graph_backend="neo4j" if self._neo4j_enabled else "in_memory",
+            vector_backend="pgvector" if self._postgres_enabled else "in_memory",
         )
 
     def _create_graph_store(self, config: AppSettings) -> GraphStore:
@@ -79,7 +90,7 @@ class KnowledgeGraphService:
                 database=config.neo4j_database,
             )
             logger.info("neo4j_connected", uri=config.neo4j_uri)
-            return store  # type: ignore[no-any-return]
+            return store
         except Exception as exc:
             logger.warning(
                 "neo4j_connection_failed_falling_back_to_in_memory",
@@ -87,6 +98,85 @@ class KnowledgeGraphService:
             )
             self._neo4j_enabled = False
             return SimpleGraphStore()
+
+    def _create_storage_context(self, config: AppSettings) -> StorageContext:
+        """Create a StorageContext with optional PostgreSQL persistence."""
+        if not config.postgres_enabled or not config.postgres_uri:
+            self._postgres_enabled = False
+            return StorageContext.from_defaults(graph_store=self._graph_store)
+
+        try:
+            parsed = urlparse(config.postgres_uri)
+            vector_store = PGVectorStore.from_params(
+                host=parsed.hostname or "localhost",
+                port=str(parsed.port or 5432),
+                database=(parsed.path or "/query_engine").lstrip("/"),
+                user=parsed.username or "postgres",
+                password=parsed.password or "",
+                embed_dim=config.embed_dim,
+                hybrid_search=True,
+                text_search_config="english",
+            )
+            docstore = PostgresDocumentStore.from_uri(config.postgres_uri)
+            index_store = PostgresIndexStore.from_uri(config.postgres_uri)
+
+            logger.info("postgres_connected", uri=parsed.hostname)
+            return StorageContext.from_defaults(
+                graph_store=self._graph_store,
+                vector_store=vector_store,
+                docstore=docstore,
+                index_store=index_store,
+            )
+        except Exception as exc:
+            logger.warning(
+                "postgres_connection_failed_falling_back_to_in_memory",
+                error=str(exc),
+            )
+            self._postgres_enabled = False
+            return StorageContext.from_defaults(graph_store=self._graph_store)
+
+    def _load_or_create_kg_index(self) -> KnowledgeGraphIndex:
+        """Load existing KG index from storage or create a new one."""
+        if self._postgres_enabled:
+            try:
+                index = load_index_from_storage(
+                    storage_context=self._storage_context,
+                    index_id=KG_INDEX_ID,
+                )
+                logger.info("kg_index_loaded_from_storage")
+                return index  # type: ignore[return-value]
+            except (ValueError, KeyError):
+                pass
+
+        index = KnowledgeGraphIndex(
+            nodes=[],
+            storage_context=self._storage_context,
+            max_triplets_per_chunk=self._max_triplets,
+        )
+        index.set_index_id(KG_INDEX_ID)
+        logger.info("kg_index_created_new")
+        return index
+
+    def _load_or_create_vector_index(self) -> VectorStoreIndex:
+        """Load existing vector index from storage or create a new one."""
+        if self._postgres_enabled:
+            try:
+                index = load_index_from_storage(
+                    storage_context=self._storage_context,
+                    index_id=VECTOR_INDEX_ID,
+                )
+                logger.info("vector_index_loaded_from_storage")
+                return index  # type: ignore[return-value]
+            except (ValueError, KeyError):
+                pass
+
+        index = VectorStoreIndex(
+            nodes=[],
+            storage_context=self._storage_context,
+        )
+        index.set_index_id(VECTOR_INDEX_ID)
+        logger.info("vector_index_created_new")
+        return index
 
     def _count_triplets(self) -> int:
         """Count the number of triplets in the graph store."""
@@ -116,7 +206,7 @@ class KnowledgeGraphService:
         return self._graph_store
 
     def close(self) -> None:
-        """Close the Neo4j connection if active."""
+        """Close Neo4j connection if active."""
         if self._neo4j_enabled:
             self._neo4j_store.close()
             logger.info("neo4j_connection_closed")
@@ -140,13 +230,32 @@ class KnowledgeGraphService:
         except Exception as exc:
             return {"status": "degraded", "backend": "neo4j", "error": str(exc)}
 
+    async def check_vector_store_health(self) -> dict[str, str] | None:
+        """
+        Check PostgreSQL/pgvector connectivity.
+
+        Returns None if PostgreSQL is not enabled.
+        """
+        if not self._postgres_enabled:
+            return None
+
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(
+                None,
+                self._storage_context.docstore.get_all_document_hashes,
+            )
+            return {"status": "ok", "backend": "pgvector"}
+        except Exception as exc:
+            return {"status": "degraded", "backend": "pgvector", "error": str(exc)}
+
     async def ingest(
         self,
         text: str,
         metadata: dict[str, Any] | None = None,
     ) -> tuple[str, int]:
         """
-        Ingest a document into the knowledge graph.
+        Ingest a document into both KG and vector indexes.
 
         Returns a tuple of (document_id, triplet_count).
         """
@@ -157,8 +266,27 @@ class KnowledgeGraphService:
         try:
 
             def _ingest_sync() -> int:
+                # Stable node IDs based on doc_id + chunk position + content
+                # so retries don't create duplicate nodes/triplets
+                def _stable_id(i: int, doc: Document) -> str:
+                    content = doc.get_content()
+                    return hashlib.sha256(
+                        f"{doc.doc_id}:{i}:{content}".encode()
+                    ).hexdigest()
+
+                parser = SentenceSplitter(
+                    chunk_size=Settings.chunk_size, id_func=_stable_id
+                )
+                nodes = parser.get_nodes_from_documents([doc])
+
+                # Vector-first: embedding/pgvector write is more likely to fail
+                # (external API call). If it fails, Neo4j is untouched.
+                # If it succeeds and KG insert fails, we have embeddings without
+                # triplets (queryable via vector_only mode) — safer partial state.
+                self._vector_index.insert_nodes(nodes)
+
                 triplets_before = self._count_triplets()
-                self._index.insert(doc)
+                self._index.insert_nodes(nodes)
                 triplets_after = self._count_triplets()
                 return max(triplets_after - triplets_before, 0)
 
@@ -181,37 +309,65 @@ class KnowledgeGraphService:
         query_text: str,
         include_text: bool = True,
         response_mode: str = "tree_summarize",
+        retrieval_mode: str = "dual",
     ) -> tuple[str, list[SourceNodeInfo]]:
         """
-        Query the knowledge graph.
+        Query using KG, vector, or dual retrieval.
 
         Returns a tuple of (response_text, source_nodes).
         """
         loop = asyncio.get_running_loop()
         try:
-            query_engine = self._index.as_query_engine(
-                include_text=include_text,
-                response_mode=response_mode,
-            )
-            response = await loop.run_in_executor(
-                None, partial(query_engine.query, query_text)
-            )
+            mode = RetrievalMode(retrieval_mode)
 
-            source_nodes = [
-                SourceNodeInfo(
-                    text=node.node.get_content(),
-                    score=node.score,
-                    metadata=node.node.metadata,
+            # Fallback to kg_only if vector store not available
+            if not self._postgres_enabled and mode != RetrievalMode.KG_ONLY:
+                logger.warning(
+                    "vector_store_not_available_falling_back_to_kg_only",
+                    requested_mode=retrieval_mode,
                 )
-                for node in response.source_nodes
-            ]
+                mode = RetrievalMode.KG_ONLY
+
+            def _query_sync() -> tuple[str, list[SourceNodeInfo]]:
+                kg_retriever = self._index.as_retriever(include_text=include_text)
+                vector_retriever = self._vector_index.as_retriever(
+                    similarity_top_k=self._vector_top_k
+                )
+                retriever = DualRetriever(
+                    kg_retriever=kg_retriever,
+                    vector_retriever=vector_retriever,
+                    mode=mode,
+                )
+                synthesizer = get_response_synthesizer(
+                    response_mode=response_mode  # type: ignore[arg-type]
+                )
+                query_engine = RetrieverQueryEngine(
+                    retriever=retriever,
+                    response_synthesizer=synthesizer,
+                )
+                response = query_engine.query(query_text)
+
+                source_nodes = [
+                    SourceNodeInfo(
+                        text=node.node.get_content(),
+                        score=node.score,
+                        metadata=node.node.metadata,
+                    )
+                    for node in response.source_nodes
+                ]
+                return str(response), source_nodes
+
+            response_text, source_nodes = await loop.run_in_executor(
+                None, _query_sync
+            )
 
             logger.info(
                 "query_completed",
                 query=query_text,
+                retrieval_mode=mode.value,
                 num_sources=len(source_nodes),
             )
-            return str(response), source_nodes
+            return response_text, source_nodes
         except QueryError:
             raise
         except Exception as exc:

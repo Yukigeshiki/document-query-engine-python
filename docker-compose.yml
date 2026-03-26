@@ -18,6 +18,22 @@ services:
     volumes:
       - redis_data:/data
 
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-query_engine}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   worker:
     build: .
     command: celery -A app.worker.celery_app:celery_app worker --loglevel=info
@@ -27,11 +43,13 @@ services:
       NEO4J_URI: bolt://neo4j:7687
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       DATA_DIR: /data/query-engine
+      POSTGRES_URI: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-query_engine}
     volumes:
       - ~/query-engine-data:/data/query-engine  # for local filesystem testing
     depends_on:
       - redis
       - neo4j
+      - postgres
 
   beat:
     build: .
@@ -45,3 +63,4 @@ services:
 volumes:
   neo4j_data:
   redis_data:
+  postgres_data:

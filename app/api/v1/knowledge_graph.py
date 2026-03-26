@@ -11,6 +11,7 @@ from app.models.knowledge_graph import (
     IngestRequest,
     IngestResponse,
     QueryResponse,
+    RetrievalMode,
     SourceIngestRequest,
     SubgraphResponse,
 )
@@ -97,6 +98,7 @@ async def query_knowledge_graph(
     response_mode: Literal[
         "tree_summarize", "compact", "refine", "simple_summarize", "no_text", "accumulate"
     ] = Query(default="tree_summarize"),
+    retrieval_mode: RetrievalMode = Query(default=RetrievalMode.DUAL),
     service: KnowledgeGraphService = Depends(get_kg_service),
 ) -> QueryResponse:
     """Query the knowledge graph with a natural language question."""
@@ -104,6 +106,7 @@ async def query_knowledge_graph(
         query_text=query,
         include_text=include_text,
         response_mode=response_mode,
+        retrieval_mode=retrieval_mode,
     )
     return QueryResponse(response=response_text, source_nodes=source_nodes)
 

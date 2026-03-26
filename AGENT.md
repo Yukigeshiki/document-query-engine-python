@@ -11,6 +11,8 @@ FastAPI backend service that exposes a LlamaIndex Knowledge Graph query engine o
 - **Logging**: Structlog (JSON in prod, console in debug)
 - **KG Engine**: LlamaIndex (KnowledgeGraphIndex)
 - **Graph Store**: Neo4j (via llama-index-graph-stores-neo4j)
+- **Vector Store**: PostgreSQL + pgvector (dual retrieval: KG + vector)
+- **Task Queue**: Celery + Redis
 - **Build**: Poetry 2.3+
 - **Linting**: Ruff
 - **Type Checking**: mypy (strict mode)

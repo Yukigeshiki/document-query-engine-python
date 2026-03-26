@@ -21,6 +21,9 @@ async def health_check(
     if kg_service is not None:
         graph_health = await kg_service.check_health()
         components["graph_store"] = ComponentHealth(**graph_health)
+        vector_health = await kg_service.check_vector_store_health()
+        if vector_health:
+            components["vector_store"] = ComponentHealth(**vector_health)
 
     overall = "ok"
     status_code = 200

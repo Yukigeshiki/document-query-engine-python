@@ -87,6 +87,21 @@ async def test_query_knowledge_graph(
 
 
 @pytest.mark.asyncio
+async def test_query_with_retrieval_mode(
+    kg_client: AsyncClient, mock_kg_service: AsyncMock
+) -> None:
+    """Verify retrieval_mode parameter is passed through."""
+    response = await kg_client.get(
+        "/api/v1/kg/query",
+        params={"query": "test", "retrieval_mode": "vector_only"},
+    )
+    assert response.status_code == 200
+    mock_kg_service.query.assert_called_once()
+    call_kwargs = mock_kg_service.query.call_args
+    assert str(call_kwargs.kwargs["retrieval_mode"]) == "vector_only"
+
+
+@pytest.mark.asyncio
 async def test_subgraph(kg_client: AsyncClient, mock_kg_service: AsyncMock) -> None:
     """Verify subgraph endpoint returns nodes and edges."""
     response = await kg_client.get(

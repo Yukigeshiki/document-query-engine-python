@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     neo4j_database: str = ""
     neo4j_enabled: bool = True
 
+    # PostgreSQL / pgvector
+    postgres_uri: str = ""
+    postgres_enabled: bool = True
+    embed_dim: int = 1536
+    vector_top_k: int = 10
+
     # Data directory (shared between API and worker)
     data_dir: str = ""
 

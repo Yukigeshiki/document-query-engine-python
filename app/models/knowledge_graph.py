@@ -15,6 +15,14 @@ class SourceType(StrEnum):
     GCS = "gcs"
 
 
+class RetrievalMode(StrEnum):
+    """Controls which retrieval strategies are used for queries."""
+
+    KG_ONLY = "kg_only"
+    VECTOR_ONLY = "vector_only"
+    DUAL = "dual"
+
+
 class IngestRequest(CamelModel):
     """Request body for document ingestion."""
 
