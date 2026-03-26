@@ -122,7 +122,8 @@ class KnowledgeGraphService:
             logger.info("neo4j_connection_closed")
 
     async def check_health(self) -> dict[str, str]:
-        """Check graph store connectivity.
+        """
+        Check graph store connectivity.
 
         Returns a dict with status, backend, and optional error.
         """
@@ -142,9 +143,10 @@ class KnowledgeGraphService:
     async def ingest(
         self,
         text: str,
-        metadata: dict[str, str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> tuple[str, int]:
-        """Ingest a document into the knowledge graph.
+        """
+        Ingest a document into the knowledge graph.
 
         Returns a tuple of (document_id, triplet_count).
         """
@@ -180,7 +182,8 @@ class KnowledgeGraphService:
         include_text: bool = True,
         response_mode: str = "tree_summarize",
     ) -> tuple[str, list[SourceNodeInfo]]:
-        """Query the knowledge graph.
+        """
+        Query the knowledge graph.
 
         Returns a tuple of (response_text, source_nodes).
         """
@@ -220,7 +223,8 @@ class KnowledgeGraphService:
         entity: str,
         depth: int = 2,
     ) -> tuple[list[SubgraphNode], list[SubgraphEdge]]:
-        """Retrieve a subgraph around an entity using Cypher.
+        """
+        Retrieve a subgraph around an entity using Cypher.
 
         Returns a tuple of (nodes, edges).
         Raises ServiceUnavailableError if Neo4j is not enabled.

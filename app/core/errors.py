@@ -2,7 +2,8 @@
 
 
 class AppError(Exception):
-    """Base exception for all application errors.
+    """
+    Base exception for all application errors.
 
     Subclass this for domain-specific errors. Each carries an HTTP status
     code, a machine-readable error code, and a human-readable message.
@@ -56,3 +57,10 @@ class QueryError(AppError):
 
     status_code: int = 500
     error: str = "query_error"
+
+
+class ConnectorError(AppError):
+    """Raised when a document connector fails to load documents."""
+
+    status_code: int = 502
+    error: str = "connector_error"

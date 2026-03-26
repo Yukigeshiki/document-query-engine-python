@@ -39,5 +39,12 @@ class Settings(BaseSettings):
     neo4j_database: str = ""
     neo4j_enabled: bool = True
 
+    # Document connectors
+    gcs_bucket: str = ""
+    gcs_credentials_path: str = ""
+
+    # Celery
+    celery_broker_url: str = ""
+
 
 settings = Settings()

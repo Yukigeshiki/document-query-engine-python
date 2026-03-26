@@ -13,7 +13,8 @@ logger = structlog.stdlib.get_logger(__name__)
 
 
 class RequestContextMiddleware:
-    """Pure ASGI middleware for request ID propagation, timing, and unhandled error safety.
+    """
+    Pure ASGI middleware for request ID propagation, timing, and unhandled error safety.
 
     Reads an incoming X-Request-ID header or generates a new UUID.
     Binds request_id to structlog contextvars so all downstream log

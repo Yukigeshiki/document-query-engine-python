@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
+from app.connectors.setup import register_default_connectors
 from app.core.config import settings
 from app.core.error_handlers import register_error_handlers
 from app.core.logging import setup_logging
@@ -23,6 +24,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     setup_logging()
     logger.info("starting", app_name=settings.app_name, version=settings.app_version)
     _app.state.kg_service = KnowledgeGraphService(settings)
+    register_default_connectors(settings)
     yield
     _app.state.kg_service.close()
     logger.info("shutting_down", app_name=settings.app_name)

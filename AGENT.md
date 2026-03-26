@@ -21,9 +21,11 @@ FastAPI backend service that exposes a LlamaIndex Knowledge Graph query engine o
 ```
 app/
 ├── api/v1/          # API route handlers
-├── core/            # Config (Pydantic Settings) and logging
-├── models/          # Pydantic request/response schemas
-└── services/        # Business logic (KnowledgeGraphService, etc.)
+├── connectors/      # Document source connectors (filesystem, GCS)
+├── core/            # Config (Pydantic Settings), logging, errors, middleware
+├── models/          # Pydantic request/response schemas (CamelModel base)
+├── services/        # Business logic (KnowledgeGraphService, IngestionPipeline)
+└── worker/          # Celery app, background tasks
 tests/               # Pytest test suite
 ```
 
@@ -47,6 +49,9 @@ poetry run ruff format .
 
 # Type check
 poetry run mypy .
+
+# Run Celery worker
+poetry run celery -A app.worker.celery_app:celery_app worker --loglevel=info
 ```
 
 ## Code Conventions

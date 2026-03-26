@@ -5,8 +5,8 @@ type: user
 ---
 
 - Builds on Kotlin + Spring Boot (primary stack) with LangChain4j and LangGraph4j for agent orchestration
-- Uses MongoDB (likely Atlas) as a primary datastore
+- Uses PostgreSQL as the primary datastore for the Kotlin agent
 - Deploying on GKE with Traefik ingress and cert-manager for TLS
 - Comfortable with both JVM and Python ecosystems
-- Building this Python service as a sidecar to the Kotlin agent — chose FastAPI + HTTPS over gRPC for simplicity
+- Building this Python service as a separate microservice — chose FastAPI + HTTPS over gRPC for simplicity
 - Familiar with LlamaIndex concepts at a design level, building the implementation now

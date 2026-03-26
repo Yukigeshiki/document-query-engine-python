@@ -4,9 +4,9 @@ description: 16-step build roadmap for the agent query engine — LlamaIndex KG 
 type: project
 ---
 
-Building a LlamaIndex-based Knowledge Graph query engine as a Python/FastAPI microservice. The Kotlin agent (LangGraph4j + LangChain4j) calls this service over HTTPS (not gRPC). Neo4j is the graph store. Deployed on GKE with Traefik + cert-manager.
+Building a LlamaIndex-based Knowledge Graph query engine as a Python/FastAPI microservice. The Kotlin agent (LangGraph4j + LangChain4j) calls this service over HTTPS. Neo4j is the graph store. Deployed on GKE with Traefik + cert-manager.
 
-**Why:** The Kotlin agent needs access to large amounts of data via a knowledge graph. LlamaIndex excels at KG indexing and multi-document synthesis. Python sidecar is justified by the KG complexity.
+**Why:** The Kotlin agent needs access to large amounts of data via a knowledge graph. LlamaIndex excels at KG indexing and multi-document synthesis. Deployed as a separate service.
 
 **How to apply:** All 16 roadmap items build toward this architecture.
 
@@ -16,8 +16,8 @@ Building a LlamaIndex-based Knowledge Graph query engine as a Python/FastAPI mic
 3. ~~Error Handling Framework~~ — DONE
 4. ~~LlamaIndex Core Integration~~ — DONE
 5. ~~Neo4j Graph Store~~ — DONE
-6. Dependency Injection — pending
-7. Document Connectors & Ingestion Pipeline — pending
+6. ~~Dependency Injection~~ — DONE
+7. ~~Document Connectors & Ingestion Pipeline~~ — DONE
 8. Background Task Processing — pending
 9. Hybrid Retrieval (KG + Vector) + Index Persistence — pending
 10. Authentication & API Key Management — pending

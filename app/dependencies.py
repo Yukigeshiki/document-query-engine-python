@@ -7,7 +7,8 @@ from app.services.knowledge_graph import KnowledgeGraphService
 
 
 def get_kg_service(request: Request) -> KnowledgeGraphService:
-    """Return the KnowledgeGraphService singleton.
+    """
+    Return the KnowledgeGraphService singleton.
 
     Raises ServiceUnavailableError if the service has not been initialized.
     """
@@ -22,7 +23,8 @@ def get_kg_service(request: Request) -> KnowledgeGraphService:
 
 
 def get_optional_kg_service(request: Request) -> KnowledgeGraphService | None:
-    """Return the KnowledgeGraphService if available, otherwise None.
+    """
+    Return the KnowledgeGraphService if available, otherwise None.
 
     Used by the health endpoint which must respond even when the service
     has not been initialized.

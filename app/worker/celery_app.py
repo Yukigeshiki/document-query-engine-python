@@ -1,0 +1,25 @@
+"""Celery application instance and configuration."""
+
+from celery import Celery
+
+from app.core.config import settings
+
+celery_app = Celery(
+    "agent_query_engine",
+    broker=settings.celery_broker_url,
+    backend=settings.celery_broker_url,
+)
+
+celery_app.conf.update(
+    task_serializer="json",
+    result_serializer="json",
+    accept_content=["json"],
+    result_expires=86400,
+    task_track_started=True,
+    worker_concurrency=1,
+    worker_prefetch_multiplier=1,
+    task_soft_time_limit=600,
+    task_time_limit=900,
+)
+
+celery_app.autodiscover_tasks(["app.worker"])

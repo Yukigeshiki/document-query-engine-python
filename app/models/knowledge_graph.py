@@ -1,5 +1,6 @@
 """Knowledge graph request and response models."""
 
+from enum import StrEnum
 from typing import Any
 
 from pydantic import Field
@@ -7,11 +8,18 @@ from pydantic import Field
 from app.models import CamelModel
 
 
+class SourceType(StrEnum):
+    """Supported document source connector types."""
+
+    FILESYSTEM = "filesystem"
+    GCS = "gcs"
+
+
 class IngestRequest(CamelModel):
     """Request body for document ingestion."""
 
     text: str = Field(..., min_length=1, description="Document text to ingest")
-    metadata: dict[str, str] | None = Field(
+    metadata: dict[str, Any] | None = Field(
         default=None, description="Optional metadata key-value pairs"
     )
 
@@ -21,6 +29,13 @@ class IngestResponse(CamelModel):
 
     document_id: str
     triplet_count: int
+
+
+class SourceIngestRequest(CamelModel):
+    """Request body for bulk document ingestion from a source."""
+
+    source_type: SourceType
+    config: dict[str, Any] = Field(..., description="Source-specific configuration")
 
 
 class SourceNodeInfo(CamelModel):
