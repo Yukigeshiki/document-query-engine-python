@@ -3,10 +3,10 @@
 from typing import Literal
 
 import structlog
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, UploadFile
 
 from app.core.errors import ServiceUnavailableError
-from app.dependencies import get_kg_service
+from app.dependencies import get_kg_service, get_upload_service
 from app.models.knowledge_graph import (
     IngestRequest,
     IngestResponse,
@@ -16,6 +16,7 @@ from app.models.knowledge_graph import (
 )
 from app.models.tasks import SourceIngestAcceptedResponse
 from app.services.knowledge_graph import KnowledgeGraphService
+from app.services.upload import UploadService
 from app.worker.tasks import ingest_source_task
 
 logger = structlog.stdlib.get_logger(__name__)
@@ -54,6 +55,33 @@ async def ingest_from_source(
         result = ingest_source_task.delay(
             source_type=body.source_type.value,
             config=body.config,
+        )
+    except Exception as exc:
+        raise ServiceUnavailableError(
+            detail=f"Failed to submit ingestion task: {exc}"
+        ) from exc
+    return SourceIngestAcceptedResponse(task_id=result.id)
+
+
+@router.post(
+    "/ingest/upload",
+    response_model=SourceIngestAcceptedResponse,
+    status_code=202,
+)
+async def ingest_upload(
+    file: UploadFile,
+    upload_service: UploadService = Depends(get_upload_service),
+) -> SourceIngestAcceptedResponse:
+    """
+    Upload a document for async ingestion into the knowledge graph.
+
+    Accepts PDF, DOCX, or TXT files. Returns a task ID for polling.
+    """
+    source_type, config = await upload_service.save(file)
+    try:
+        result = ingest_source_task.delay(
+            source_type=source_type.value,
+            config=config,
         )
     except Exception as exc:
         raise ServiceUnavailableError(

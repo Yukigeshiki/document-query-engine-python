@@ -1,9 +1,14 @@
 """Celery tasks for background processing."""
 
 import asyncio
+import shutil
+import time
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import structlog
+from google.cloud import storage as gcs_storage  # type: ignore[import-untyped]
 
 from app.connectors.setup import register_default_connectors
 from app.core.config import settings
@@ -62,3 +67,75 @@ def ingest_source_task(
         "total_triplets": total_triplets,
         "errors": errors,
     }
+
+
+UPLOADS_MAX_AGE_SECONDS = 24 * 60 * 60  # 24 hours
+UPLOADS_PREFIX = "uploads/"
+
+
+@celery_app.task(name="cleanup_uploads")  # type: ignore[untyped-decorator]
+def cleanup_uploads_task() -> dict[str, Any]:
+    """Remove uploaded files older than 24 hours from local disk and GCS."""
+    deleted_local = _cleanup_local_uploads()
+    deleted_gcs = _cleanup_gcs_uploads()
+
+    total = deleted_local + deleted_gcs
+    logger.info(
+        "cleanup_completed",
+        deleted_local=deleted_local,
+        deleted_gcs=deleted_gcs,
+        total=total,
+    )
+    return {"deleted": total}
+
+
+def _cleanup_local_uploads() -> int:
+    """Remove local upload directories older than 24 hours."""
+    if not settings.data_dir:
+        return 0
+
+    uploads_dir = Path(settings.data_dir) / "uploads"
+    if not uploads_dir.exists():
+        return 0
+
+    now = time.time()
+    deleted = 0
+
+    for subdir in uploads_dir.iterdir():
+        if not subdir.is_dir():
+            continue
+        if now - subdir.stat().st_mtime > UPLOADS_MAX_AGE_SECONDS:
+            shutil.rmtree(subdir)
+            deleted += 1
+            logger.info("local_upload_cleaned_up", path=str(subdir))
+
+    return deleted
+
+
+def _cleanup_gcs_uploads() -> int:
+    """Remove GCS upload objects older than 24 hours."""
+    if not settings.gcs_bucket:
+        return 0
+
+    try:
+        if settings.gcs_credentials_path:
+            client = gcs_storage.Client.from_service_account_json(
+                settings.gcs_credentials_path
+            )
+        else:
+            client = gcs_storage.Client()
+
+        bucket = client.bucket(settings.gcs_bucket)
+        cutoff = datetime.now(tz=UTC).timestamp() - UPLOADS_MAX_AGE_SECONDS
+        deleted = 0
+
+        for blob in bucket.list_blobs(prefix=UPLOADS_PREFIX):
+            if blob.updated and blob.updated.timestamp() < cutoff:
+                blob.delete()
+                deleted += 1
+                logger.info("gcs_upload_cleaned_up", path=blob.name)
+
+        return deleted
+    except Exception as exc:
+        logger.warning("gcs_cleanup_failed", error=str(exc))
+        return 0

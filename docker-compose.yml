@@ -26,11 +26,21 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       NEO4J_URI: bolt://neo4j:7687
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DATA_DIR: /data/query-engine
     volumes:
-      - ~/query-engine-data:/root/query-engine-data  # for local filesystem testing
+      - ~/query-engine-data:/data/query-engine  # for local filesystem testing
     depends_on:
       - redis
       - neo4j
+
+  beat:
+    build: .
+    command: celery -A app.worker.celery_app:celery_app beat --loglevel=info
+    env_file: .env
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+    depends_on:
+      - redis
 
 volumes:
   neo4j_data:

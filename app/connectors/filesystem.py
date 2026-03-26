@@ -7,23 +7,25 @@ from typing import Any
 import structlog
 from llama_index.core import Document, SimpleDirectoryReader
 
+from app.connectors import SUPPORTED_EXTENSIONS
 from app.connectors.base import BaseConnector
 from app.core.errors import BadRequestError, ConnectorError
 
 logger = structlog.stdlib.get_logger(__name__)
 
-SUPPORTED_EXTENSIONS = [".pdf", ".docx", ".txt"]
-ALLOWED_BASE_DIR = Path.home() / "query-engine-data"
-
 
 class FilesystemConnector(BaseConnector):
     """Load documents from a local filesystem directory."""
+
+    def __init__(self, data_dir: Path) -> None:
+        """Initialize with the allowed base directory."""
+        self._data_dir = data_dir
 
     def load_documents(self, config: dict[str, Any]) -> Iterator[Document]:
         """
         Yield documents from the configured path.
 
-        The path must resolve to a location within ~/query-engine-data.
+        The path must resolve to a location within the configured data directory.
 
         Config keys:
             path (str): Directory path to read from. Required.
@@ -35,11 +37,18 @@ class FilesystemConnector(BaseConnector):
                 detail="Filesystem connector requires 'path' in config"
             )
 
-        path = Path(str(dir_path)).resolve()
+        raw_path = Path(str(dir_path))
 
-        if not path.is_relative_to(ALLOWED_BASE_DIR):
+        # Resolve relative paths against data_dir so that workers with
+        # different DATA_DIR values can find uploaded files
+        if not raw_path.is_absolute():
+            path = (self._data_dir / raw_path).resolve()
+        else:
+            path = raw_path.resolve()
+
+        if not path.is_relative_to(self._data_dir):
             raise BadRequestError(
-                detail=f"Path must be within {ALLOWED_BASE_DIR}"
+                detail=f"Path must be within {self._data_dir}"
             )
 
         if not path.exists() or not path.is_dir():

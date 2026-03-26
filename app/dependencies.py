@@ -4,6 +4,7 @@ from fastapi import Request
 
 from app.core.errors import ServiceUnavailableError
 from app.services.knowledge_graph import KnowledgeGraphService
+from app.services.upload import UploadService
 
 
 def get_kg_service(request: Request) -> KnowledgeGraphService:
@@ -30,3 +31,15 @@ def get_optional_kg_service(request: Request) -> KnowledgeGraphService | None:
     has not been initialized.
     """
     return getattr(request.app.state, "kg_service", None)
+
+
+def get_upload_service(request: Request) -> UploadService:
+    """Return the UploadService singleton."""
+    service: UploadService | None = getattr(
+        request.app.state, "upload_service", None
+    )
+    if service is None:
+        raise ServiceUnavailableError(
+            detail="Upload service is not available"
+        )
+    return service

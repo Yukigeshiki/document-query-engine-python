@@ -1,6 +1,7 @@
 """Celery application instance and configuration."""
 
 from celery import Celery
+from celery.schedules import crontab
 
 from app.core.config import settings
 
@@ -20,6 +21,12 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     task_soft_time_limit=600,
     task_time_limit=900,
+    beat_schedule={
+        "cleanup-uploads-daily": {
+            "task": "cleanup_uploads",
+            "schedule": crontab(hour=3, minute=0),
+        },
+    },
 )
 
 celery_app.autodiscover_tasks(["app.worker"])

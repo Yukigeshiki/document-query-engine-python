@@ -26,9 +26,9 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
 
     # LlamaIndex
-    llm_model: str = "gpt-4o-mini"
-    llm_temperature: float = 0.0
-    embedding_model: str = "text-embedding-3-small"
+    llm_model: str = ""
+    llm_temperature: float = 0
+    embedding_model: str = ""
     max_triplets_per_chunk: int = 10
     chunk_size: int = 1024
 
@@ -39,9 +39,15 @@ class Settings(BaseSettings):
     neo4j_database: str = ""
     neo4j_enabled: bool = True
 
+    # Data directory (shared between API and worker)
+    data_dir: str = ""
+
     # Document connectors
     gcs_bucket: str = ""
     gcs_credentials_path: str = ""
+
+    # Uploads
+    upload_storage: str = ""
 
     # Celery
     celery_broker_url: str = ""

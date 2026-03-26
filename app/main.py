@@ -14,6 +14,7 @@ from app.core.error_handlers import register_error_handlers
 from app.core.logging import setup_logging
 from app.core.middleware import RequestContextMiddleware
 from app.services.knowledge_graph import KnowledgeGraphService
+from app.services.upload import UploadService
 
 logger = structlog.stdlib.get_logger(__name__)
 
@@ -24,6 +25,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     setup_logging()
     logger.info("starting", app_name=settings.app_name, version=settings.app_version)
     _app.state.kg_service = KnowledgeGraphService(settings)
+    if settings.upload_storage:
+        _app.state.upload_service = UploadService(settings)
     register_default_connectors(settings)
     yield
     _app.state.kg_service.close()

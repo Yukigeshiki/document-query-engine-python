@@ -1,6 +1,5 @@
 """Tests for document connectors and registry."""
 
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -40,32 +39,41 @@ class TestRegistry:
 class TestFilesystemConnector:
     """Tests for the filesystem connector."""
 
-    def test_loads_txt_documents(self) -> None:
+    def test_loads_txt_documents(self, tmp_path: Path) -> None:
         """Verify loading .txt files from a directory."""
-        with tempfile.TemporaryDirectory(dir=Path.home() / "query-engine-data") as tmpdir:
-            Path(tmpdir, "test.txt").write_text("Hello world")
-            connector = FilesystemConnector()
-            docs = list(connector.load_documents({"path": tmpdir}))
-            assert len(docs) == 1
-            assert "Hello world" in docs[0].get_content()
+        subdir = tmp_path / "docs"
+        subdir.mkdir()
+        (subdir / "test.txt").write_text("Hello world")
+        connector = FilesystemConnector(data_dir=tmp_path)
+        docs = list(connector.load_documents({"path": str(subdir)}))
+        assert len(docs) == 1
+        assert "Hello world" in docs[0].get_content()
 
-    def test_missing_path_raises(self) -> None:
+    def test_missing_path_raises(self, tmp_path: Path) -> None:
         """Verify BadRequestError when path is missing."""
-        connector = FilesystemConnector()
+        connector = FilesystemConnector(data_dir=tmp_path)
         with pytest.raises(BadRequestError, match="requires 'path'"):
             list(connector.load_documents({}))
 
-    def test_nonexistent_dir_raises(self) -> None:
+    def test_nonexistent_dir_raises(self, tmp_path: Path) -> None:
         """Verify BadRequestError for nonexistent directory."""
-        connector = FilesystemConnector()
+        connector = FilesystemConnector(data_dir=tmp_path)
         with pytest.raises(BadRequestError, match="does not exist"):
-            list(connector.load_documents(
-                {"path": str(Path.home() / "query-engine-data" / "nonexistent")}
-            ))
+            list(connector.load_documents({"path": str(tmp_path / "nonexistent")}))
 
-    def test_path_outside_allowed_dir_raises(self) -> None:
+    def test_loads_documents_with_relative_path(self, tmp_path: Path) -> None:
+        """Verify loading documents when path is relative to data_dir."""
+        subdir = tmp_path / "uploads" / "abc-123"
+        subdir.mkdir(parents=True)
+        (subdir / "test.txt").write_text("Relative path test")
+        connector = FilesystemConnector(data_dir=tmp_path)
+        docs = list(connector.load_documents({"path": "uploads/abc-123"}))
+        assert len(docs) == 1
+        assert "Relative path test" in docs[0].get_content()
+
+    def test_path_outside_allowed_dir_raises(self, tmp_path: Path) -> None:
         """Verify BadRequestError for path outside allowed directory."""
-        connector = FilesystemConnector()
+        connector = FilesystemConnector(data_dir=tmp_path)
         with pytest.raises(BadRequestError, match="must be within"):
             list(connector.load_documents({"path": "/etc"}))
 
