@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import time
 import uuid
 from functools import partial
 from typing import Any
@@ -30,6 +31,20 @@ from llama_index.vector_stores.postgres import PGVectorStore
 
 from app.core.config import Settings as AppSettings
 from app.core.errors import IngestionError, QueryError, ServiceUnavailableError
+from app.core.metrics import (
+    kg_cache_up,
+    kg_graph_store_up,
+    kg_ingest_duration_seconds,
+    kg_ingest_total,
+    kg_ingest_triplets_total,
+    kg_query_cache_hits_total,
+    kg_query_cache_misses_total,
+    kg_query_duration_seconds,
+    kg_query_total,
+    kg_subgraph_duration_seconds,
+    kg_subgraph_total,
+    kg_vector_store_up,
+)
 from app.models.knowledge_graph import RetrievalMode, SourceNodeInfo, SubgraphEdge, SubgraphNode
 from app.services.dual_retriever import DualRetriever
 from app.services.query_cache import QueryCache
@@ -220,6 +235,7 @@ class KnowledgeGraphService:
         Returns a dict with status, backend, and optional error.
         """
         if not self._neo4j_enabled:
+            kg_graph_store_up.set(1)
             return {"status": "ok", "backend": "in_memory"}
 
         loop = asyncio.get_running_loop()
@@ -228,8 +244,10 @@ class KnowledgeGraphService:
                 None,
                 partial(self._neo4j_store.query, "RETURN 1"),
             )
+            kg_graph_store_up.set(1)
             return {"status": "ok", "backend": "neo4j"}
         except Exception as exc:
+            kg_graph_store_up.set(0)
             return {"status": "degraded", "backend": "neo4j", "error": str(exc)}
 
     async def check_vector_store_health(self) -> dict[str, str] | None:
@@ -239,6 +257,7 @@ class KnowledgeGraphService:
         Returns None if PostgreSQL is not enabled.
         """
         if not self._postgres_enabled:
+            kg_vector_store_up.set(1)
             return None
 
         loop = asyncio.get_running_loop()
@@ -247,16 +266,21 @@ class KnowledgeGraphService:
                 None,
                 self._storage_context.docstore.get_all_document_hashes,
             )
+            kg_vector_store_up.set(1)
             return {"status": "ok", "backend": "pgvector"}
         except Exception as exc:
+            kg_vector_store_up.set(0)
             return {"status": "degraded", "backend": "pgvector", "error": str(exc)}
 
     async def check_cache_health(self) -> dict[str, str] | None:
         """Check query cache connectivity. Returns None if cache is not enabled."""
         if self._cache is None:
+            kg_cache_up.set(1)
             return None
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._cache.check_health)
+        result = await loop.run_in_executor(None, self._cache.check_health)
+        kg_cache_up.set(1 if result.get("status") == "ok" else 0)
+        return result
 
     async def ingest(
         self,
@@ -271,6 +295,7 @@ class KnowledgeGraphService:
         doc_id = str(uuid.uuid4())
         doc = Document(text=text, doc_id=doc_id, metadata=metadata or {})
 
+        start = time.perf_counter()
         loop = asyncio.get_running_loop()
         try:
 
@@ -301,6 +326,10 @@ class KnowledgeGraphService:
 
             triplet_count = await loop.run_in_executor(None, _ingest_sync)
 
+            kg_ingest_duration_seconds.observe(time.perf_counter() - start)
+            kg_ingest_total.labels(status="success").inc()
+            kg_ingest_triplets_total.inc(triplet_count)
+
             logger.info(
                 "document_ingested",
                 document_id=doc_id,
@@ -308,8 +337,10 @@ class KnowledgeGraphService:
             )
             return doc_id, triplet_count
         except IngestionError:
+            kg_ingest_total.labels(status="error").inc()
             raise
         except Exception as exc:
+            kg_ingest_total.labels(status="error").inc()
             logger.error("ingestion_failed", document_id=doc_id, error=str(exc))
             raise IngestionError(detail=f"Failed to ingest document: {exc}") from exc
         finally:
@@ -328,6 +359,7 @@ class KnowledgeGraphService:
 
         Returns a tuple of (response_text, source_nodes).
         """
+        start = time.perf_counter()
         loop = asyncio.get_running_loop()
         try:
             mode = RetrievalMode(retrieval_mode)
@@ -351,8 +383,10 @@ class KnowledgeGraphService:
                         embedding=query_embedding,
                     )
                     if cached is not None:
+                        kg_query_cache_hits_total.inc()
                         response_text, source_nodes, _ = cached
                         return response_text, source_nodes
+                    kg_query_cache_misses_total.inc()
 
                 kg_retriever = self._index.as_retriever(include_text=include_text)
                 vector_retriever = self._vector_index.as_retriever(
@@ -395,6 +429,11 @@ class KnowledgeGraphService:
                 None, _query_sync
             )
 
+            kg_query_duration_seconds.labels(retrieval_mode=mode.value).observe(
+                time.perf_counter() - start
+            )
+            kg_query_total.labels(retrieval_mode=mode.value, status="success").inc()
+
             logger.info(
                 "query_completed",
                 query=query_text,
@@ -403,8 +442,10 @@ class KnowledgeGraphService:
             )
             return response_text, source_nodes
         except QueryError:
+            kg_query_total.labels(retrieval_mode=retrieval_mode, status="error").inc()
             raise
         except Exception as exc:
+            kg_query_total.labels(retrieval_mode=retrieval_mode, status="error").inc()
             logger.error("query_failed", query=query_text, error=str(exc))
             raise QueryError(detail=f"Query failed: {exc}") from exc
 
@@ -434,6 +475,7 @@ class KnowledgeGraphService:
             "tgt.id AS target_id, labels(tgt) AS target_labels"
         )
 
+        start = time.perf_counter()
         loop = asyncio.get_running_loop()
         try:
             records: list[dict[str, Any]] = await loop.run_in_executor(
@@ -472,6 +514,9 @@ class KnowledgeGraphService:
                     target=tgt_id,
                     relation=str(record["relation"]),
                 ))
+
+            kg_subgraph_duration_seconds.observe(time.perf_counter() - start)
+            kg_subgraph_total.inc()
 
             logger.info(
                 "subgraph_retrieved",

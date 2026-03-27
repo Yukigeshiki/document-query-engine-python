@@ -15,6 +15,7 @@ from psycopg2 import Error as PgError
 from psycopg2.extensions import connection as pg_connection  # type: ignore[import-untyped]
 
 from app.core.config import Settings as AppSettings
+from app.core.metrics import kg_cache_invalidations_total, kg_cache_similarity_score
 from app.models.knowledge_graph import SourceNodeInfo
 
 logger = structlog.stdlib.get_logger(__name__)
@@ -193,6 +194,7 @@ class QueryCache:
             source_nodes = [
                 SourceNodeInfo.model_validate(sn) for sn in data["source_nodes"]
             ]
+            kg_cache_similarity_score.observe(similarity)
             logger.info(
                 "query_cache_hit",
                 similarity=round(similarity, 4),
@@ -282,6 +284,7 @@ class QueryCache:
             for key in self._redis.scan_iter(f"{CACHE_KEY_PREFIX}*"):
                 self._redis.delete(key)
 
+            kg_cache_invalidations_total.inc()
             logger.info("query_cache_invalidated")
 
         except Exception as exc:

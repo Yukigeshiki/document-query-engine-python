@@ -1,11 +1,13 @@
 """FastAPI application factory and lifespan management."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
 from slowapi.errors import RateLimitExceeded
 
 from app.api.v1.router import api_router
@@ -21,6 +23,20 @@ from app.services.upload import UploadService
 
 logger = structlog.stdlib.get_logger(__name__)
 
+HEALTH_POLL_INTERVAL_SECONDS = 30
+
+
+async def _health_poller(kg_service: KnowledgeGraphService) -> None:
+    """Periodically run health checks to keep Prometheus gauges fresh."""
+    while True:
+        try:
+            await kg_service.check_graph_store_health()
+            await kg_service.check_vector_store_health()
+            await kg_service.check_cache_health()
+        except Exception as exc:
+            logger.warning("health_poll_failed", error=str(exc))
+        await asyncio.sleep(HEALTH_POLL_INTERVAL_SECONDS)
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -33,7 +49,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     if settings.upload_storage:
         _app.state.upload_service = UploadService(settings)
     register_default_connectors(settings)
+    poller_task = asyncio.create_task(_health_poller(_app.state.kg_service))
     yield
+    poller_task.cancel()
     _app.state.kg_service.close()
     logger.info("shutting_down", app_name=settings.app_name)
 
@@ -62,6 +80,10 @@ def create_app() -> FastAPI:
     app.include_router(api_router)
     register_error_handlers(app)
     app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)  # type: ignore[arg-type]
+
+    Instrumentator(
+        excluded_handlers=[r".*health.*", r".*metrics.*"],
+    ).instrument(app).expose(app, endpoint="/metrics")
 
     return app
 
