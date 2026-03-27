@@ -282,6 +282,49 @@ class KnowledgeGraphService:
         kg_cache_up.set(1 if result.get("status") == "ok" else 0)
         return result
 
+    async def list_documents(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """
+        List ingested documents from the docstore.
+
+        Returns a tuple of (documents, total_count) for pagination.
+        Documents are sorted newest-first (by insertion order, reversed).
+        """
+        loop = asyncio.get_running_loop()
+
+        def _list_sync() -> tuple[list[dict[str, Any]], int]:
+            ref_doc_info = self._storage_context.docstore.get_all_ref_doc_info()
+            if not ref_doc_info:
+                return [], 0
+
+            # Group chunks by file_path so multi-chunk docs appear as one entry.
+            # file_path is unique per upload (includes the upload subdirectory),
+            # so two uploads of the same filename stay separate.
+            grouped: dict[str, dict[str, Any]] = {}
+            for doc_id, info in ref_doc_info.items():
+                metadata = info.metadata or {}
+                group_key = metadata.get("file_path") or metadata.get("file_name") or doc_id
+                if group_key not in grouped:
+                    grouped[group_key] = {
+                        "doc_id": doc_id,
+                        "file_name": metadata.get("file_name") or doc_id,
+                        "node_count": 0,
+                        "doc_ids": [],
+                        "metadata": metadata,
+                    }
+                grouped[group_key]["node_count"] += len(info.node_ids)
+                grouped[group_key]["doc_ids"].append(doc_id)
+
+            # Newest first (reverse insertion order)
+            all_docs = list(reversed(grouped.values()))
+            total = len(all_docs)
+            return all_docs[offset : offset + limit], total
+
+        return await loop.run_in_executor(None, _list_sync)
+
     async def ingest(
         self,
         text: str,
@@ -293,7 +336,16 @@ class KnowledgeGraphService:
         Returns a tuple of (document_id, triplet_count).
         """
         doc_id = str(uuid.uuid4())
-        doc = Document(text=text, doc_id=doc_id, metadata=metadata or {})
+        # Store all metadata in the docstore (for grouping, display, etc.)
+        # but exclude everything from LLM triplet extraction so it doesn't
+        # pollute the knowledge graph.
+        doc_metadata = metadata or {}
+        doc = Document(
+            text=text,
+            doc_id=doc_id,
+            metadata=doc_metadata,
+            excluded_llm_metadata_keys=list(doc_metadata.keys()),
+        )
 
         start = time.perf_counter()
         loop = asyncio.get_running_loop()
@@ -309,9 +361,16 @@ class KnowledgeGraphService:
                     ).hexdigest()
 
                 parser = SentenceSplitter(
-                    chunk_size=Settings.chunk_size, id_func=_stable_id
+                    chunk_size=Settings.chunk_size,
+                    id_func=_stable_id,
                 )
                 nodes = parser.get_nodes_from_documents([doc])
+
+                # Exclude all metadata from LLM triplet extraction, so file-system
+                # details (file_path, file_size, creation_date, etc.) don't pollute
+                # the knowledge graph. Metadata is still stored in the docstore.
+                for node in nodes:
+                    node.excluded_llm_metadata_keys = list(node.metadata.keys())
 
                 # Vector-first: embedding/pgvector write is more likely to fail
                 # (external API call). If it fails, Neo4j is untouched.
@@ -449,6 +508,41 @@ class KnowledgeGraphService:
             logger.error("query_failed", query=query_text, error=str(exc))
             raise QueryError(detail=f"Query failed: {exc}") from exc
 
+    @staticmethod
+    def _records_to_graph(
+        records: list[dict[str, Any]],
+    ) -> tuple[list[SubgraphNode], list[SubgraphEdge]]:
+        """Convert Neo4j query records to SubgraphNode/SubgraphEdge lists."""
+        node_map: dict[str, SubgraphNode] = {}
+        edges: list[SubgraphEdge] = []
+
+        for record in records:
+            src_id = str(record["source_id"])
+            tgt_id = str(record["target_id"])
+
+            if src_id not in node_map:
+                labels = record.get("source_labels", [])
+                node_map[src_id] = SubgraphNode(
+                    id=src_id,
+                    label=labels[0] if labels else None,
+                    properties={},
+                )
+            if tgt_id not in node_map:
+                labels = record.get("target_labels", [])
+                node_map[tgt_id] = SubgraphNode(
+                    id=tgt_id,
+                    label=labels[0] if labels else None,
+                    properties={},
+                )
+
+            edges.append(SubgraphEdge(
+                source=src_id,
+                target=tgt_id,
+                relation=str(record["relation"]),
+            ))
+
+        return list(node_map.values()), edges
+
     async def get_subgraph(
         self,
         entity: str,
@@ -467,7 +561,7 @@ class KnowledgeGraphService:
 
         cypher = (
             f"MATCH path = (start)-[*1..{depth}]-(connected) "
-            "WHERE start.id = $entity "
+            "WHERE toLower(start.id) = toLower($entity) "
             "UNWIND relationships(path) AS rel "
             "WITH DISTINCT startNode(rel) AS src, rel, endNode(rel) AS tgt "
             "RETURN src.id AS source_id, labels(src) AS source_labels, "
@@ -487,33 +581,7 @@ class KnowledgeGraphService:
                 ),
             )
 
-            node_map: dict[str, SubgraphNode] = {}
-            edges: list[SubgraphEdge] = []
-
-            for record in records:
-                src_id = str(record["source_id"])
-                tgt_id = str(record["target_id"])
-
-                if src_id not in node_map:
-                    labels = record.get("source_labels", [])
-                    node_map[src_id] = SubgraphNode(
-                        id=src_id,
-                        label=labels[0] if labels else None,
-                        properties={},
-                    )
-                if tgt_id not in node_map:
-                    labels = record.get("target_labels", [])
-                    node_map[tgt_id] = SubgraphNode(
-                        id=tgt_id,
-                        label=labels[0] if labels else None,
-                        properties={},
-                    )
-
-                edges.append(SubgraphEdge(
-                    source=src_id,
-                    target=tgt_id,
-                    relation=str(record["relation"]),
-                ))
+            nodes, edges = self._records_to_graph(records)
 
             kg_subgraph_duration_seconds.observe(time.perf_counter() - start)
             kg_subgraph_total.inc()
@@ -522,12 +590,81 @@ class KnowledgeGraphService:
                 "subgraph_retrieved",
                 entity=entity,
                 depth=depth,
-                nodes=len(node_map),
+                nodes=len(nodes),
                 edges=len(edges),
             )
-            return list(node_map.values()), edges
+            return nodes, edges
         except ServiceUnavailableError:
             raise
         except Exception as exc:
             logger.error("subgraph_query_failed", entity=entity, error=str(exc))
             raise QueryError(detail=f"Subgraph query failed: {exc}") from exc
+
+    async def get_document_graph(
+        self,
+        doc_ids: list[str],
+    ) -> tuple[list[SubgraphNode], list[SubgraphEdge]]:
+        """
+        Retrieve the graph for a specific document.
+
+        Accepts multiple doc_ids to handle multi-chunk documents.
+        Finds all entities associated with the documents' nodes
+        and fetches their relationships from Neo4j.
+        """
+        if not self._neo4j_enabled:
+            raise ServiceUnavailableError(
+                detail="Graph queries require Neo4j backend"
+            )
+
+        loop = asyncio.get_running_loop()
+
+        def _get_doc_graph_sync() -> tuple[list[SubgraphNode], list[SubgraphEdge]]:
+            # Get the node IDs for all chunks of this document
+            ref_info = self._storage_context.docstore.get_all_ref_doc_info()
+            if not ref_info:
+                return [], []
+
+            doc_node_ids: set[str] = set()
+            for did in doc_ids:
+                if did in ref_info:
+                    doc_node_ids.update(ref_info[did].node_ids)
+
+            # Guard against LlamaIndex internal structure changes
+            index_struct = getattr(self._index, "_index_struct", None)
+            table = getattr(index_struct, "table", None) if index_struct else None
+            if table is None:
+                logger.warning(
+                    "kg_index_struct_unavailable",
+                    msg="Cannot access KG index table — LlamaIndex internals may have changed",
+                )
+                return [], []
+
+            # Find entities that belong to this document's nodes
+            doc_entities: set[str] = set()
+            for entity, node_ids in table.items():
+                if doc_node_ids & node_ids:
+                    doc_entities.add(entity)
+
+            if not doc_entities:
+                return [], []
+
+            # Fetch relationships for these entities from Neo4j
+            entity_list = list(doc_entities)
+            cypher = (
+                "MATCH (src)-[rel]->(tgt) "
+                "WHERE src.id IN $entities OR tgt.id IN $entities "
+                "RETURN src.id AS source_id, labels(src) AS source_labels, "
+                "type(rel) AS relation, "
+                "tgt.id AS target_id, labels(tgt) AS target_labels"
+            )
+            records = self._neo4j_store.query(cypher, {"entities": entity_list})
+
+            return self._records_to_graph(records)
+
+        try:
+            return await loop.run_in_executor(None, _get_doc_graph_sync)
+        except ServiceUnavailableError:
+            raise
+        except Exception as exc:
+            logger.error("document_graph_query_failed", doc_ids=doc_ids, error=str(exc))
+            raise QueryError(detail=f"Document graph query failed: {exc}") from exc

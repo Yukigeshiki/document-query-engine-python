@@ -6,7 +6,12 @@ from fastapi import APIRouter, Request
 
 from app.core.config import settings
 from app.core.rate_limit import limiter
-from app.models.tasks import TaskCancelledResponse, TaskStatus, TaskStatusResponse
+from app.models.tasks import (
+    SourceIngestResult,
+    TaskCancelledResponse,
+    TaskStatus,
+    TaskStatusResponse,
+)
 from app.worker.celery_app import celery_app
 
 logger = structlog.stdlib.get_logger(__name__)
@@ -35,7 +40,7 @@ async def get_task_status(request: Request, task_id: str) -> TaskStatusResponse:
     error = None
 
     if result.successful():
-        task_result = result.result
+        task_result = SourceIngestResult(**result.result)
     elif result.failed():
         error = str(result.result)
 

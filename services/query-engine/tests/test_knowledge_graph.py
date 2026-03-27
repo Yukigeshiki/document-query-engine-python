@@ -8,7 +8,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.dependencies import get_kg_service
 from app.main import create_app
-from app.models.knowledge_graph import SourceNodeInfo, SubgraphEdge, SubgraphNode
+from app.models.knowledge_graph import DocumentInfo, SourceNodeInfo, SubgraphEdge, SubgraphNode
 
 
 @pytest.fixture
@@ -23,6 +23,29 @@ def mock_kg_service() -> AsyncMock:
     service.get_subgraph.return_value = (
         [SubgraphNode(id="Alice"), SubgraphNode(id="Acme Corp", label="Organization")],
         [SubgraphEdge(source="Alice", target="Acme Corp", relation="WORKS_AT")],
+    )
+    service.get_document_graph.return_value = (
+        [SubgraphNode(id="Bob"), SubgraphNode(id="Widget Inc", label="Organization")],
+        [SubgraphEdge(source="Bob", target="Widget Inc", relation="WORKS_AT")],
+    )
+    service.list_documents.return_value = (
+        [
+            {
+                "doc_id": "doc-1",
+                "doc_ids": ["doc-1"],
+                "file_name": "test.pdf",
+                "node_count": 3,
+                "metadata": {},
+            },
+            {
+                "doc_id": "doc-2",
+                "doc_ids": ["doc-2a", "doc-2b"],
+                "file_name": "report.txt",
+                "node_count": 5,
+                "metadata": {},
+            },
+        ],
+        2,
     )
     service.check_graph_store_health.return_value = {"status": "ok", "backend": "in_memory"}
     return service
@@ -116,6 +139,55 @@ async def test_subgraph(kg_client: AsyncClient, mock_kg_service: AsyncMock) -> N
     assert len(data["edges"]) == 1
     assert data["edges"][0]["relation"] == "WORKS_AT"
     mock_kg_service.get_subgraph.assert_called_once_with(entity="Alice", depth=2)
+
+
+
+@pytest.mark.asyncio
+async def test_list_documents(kg_client: AsyncClient, mock_kg_service: AsyncMock) -> None:
+    """Verify list documents endpoint returns paginated results."""
+    response = await kg_client.get("/api/v1/kg/documents")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 2
+    assert data["limit"] == 20
+    assert data["offset"] == 0
+    assert len(data["documents"]) == 2
+    assert data["documents"][0]["fileName"] == "test.pdf"
+    assert data["documents"][1]["docIds"] == ["doc-2a", "doc-2b"]
+    mock_kg_service.list_documents.assert_called_once_with(limit=20, offset=0)
+
+
+@pytest.mark.asyncio
+async def test_list_documents_pagination(kg_client: AsyncClient, mock_kg_service: AsyncMock) -> None:
+    """Verify list documents accepts limit and offset params."""
+    response = await kg_client.get(
+        "/api/v1/kg/documents",
+        params={"limit": 5, "offset": 10},
+    )
+    assert response.status_code == 200
+    mock_kg_service.list_documents.assert_called_once_with(limit=5, offset=10)
+
+
+@pytest.mark.asyncio
+async def test_document_graph(kg_client: AsyncClient, mock_kg_service: AsyncMock) -> None:
+    """Verify document graph endpoint returns nodes and edges."""
+    response = await kg_client.get(
+        "/api/v1/kg/documents/graph",
+        params={"doc_ids": ["doc-1", "doc-2"]},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["nodes"]) == 2
+    assert len(data["edges"]) == 1
+    assert data["edges"][0]["relation"] == "WORKS_AT"
+    mock_kg_service.get_document_graph.assert_called_once_with(doc_ids=["doc-1", "doc-2"])
+
+
+@pytest.mark.asyncio
+async def test_document_graph_missing_doc_ids(kg_client: AsyncClient) -> None:
+    """Verify document graph rejects missing doc_ids."""
+    response = await kg_client.get("/api/v1/kg/documents/graph")
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio

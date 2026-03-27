@@ -18,12 +18,21 @@ class TaskStatus(StrEnum):
     REVOKED = "revoked"
 
 
+class SourceIngestResult(CamelModel):
+    """Result payload from a completed source ingestion task."""
+
+    source_type: str
+    total_documents: int
+    total_triplets: int
+    errors: list[str] = Field(default_factory=list)
+
+
 class TaskStatusResponse(CamelModel):
     """Response for a task status poll."""
 
     task_id: str
     status: TaskStatus
-    result: dict[str, Any] | None = Field(default=None)
+    result: SourceIngestResult | None = Field(default=None)
     error: str | None = Field(default=None)
 
 

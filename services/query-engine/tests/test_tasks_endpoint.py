@@ -67,8 +67,8 @@ async def test_get_task_status_success(
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "success"
-    assert data["result"]["total_documents"] == 5
-    assert data["result"]["total_triplets"] == 20
+    assert data["result"]["totalDocuments"] == 5
+    assert data["result"]["totalTriplets"] == 20
 
 
 @pytest.mark.asyncio

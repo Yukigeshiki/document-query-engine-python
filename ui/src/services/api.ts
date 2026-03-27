@@ -47,6 +47,9 @@ export const apiClient = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  paramsSerializer: {
+    indexes: null, // Serialize arrays as ?key=a&key=b (FastAPI style), not ?key[]=a&key[]=b
+  },
 })
 
 apiClient.interceptors.request.use(
@@ -55,7 +58,10 @@ apiClient.interceptors.request.use(
       config.headers['Request-ID'] = crypto.randomUUID()
     }
 
-    if (config.data && typeof config.data === 'object') {
+    // Let the browser set Content-Type with boundary for FormData uploads
+    if (config.data instanceof FormData) {
+      delete config.headers['Content-Type']
+    } else if (config.data && typeof config.data === 'object') {
       config.data = transformUndefinedToNull(config.data)
     }
 

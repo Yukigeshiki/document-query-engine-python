@@ -61,6 +61,25 @@ class QueryResponse(CamelModel):
     source_nodes: list[SourceNodeInfo] = Field(default_factory=list)
 
 
+class DocumentInfo(CamelModel):
+    """Information about an ingested document (grouped by file name)."""
+
+    doc_id: str
+    doc_ids: list[str] = Field(default_factory=list)
+    file_name: str | None = None
+    node_count: int = 0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DocumentListResponse(CamelModel):
+    """Paginated response for document listing."""
+
+    documents: list[DocumentInfo]
+    total: int
+    limit: int
+    offset: int
+
+
 class SubgraphNode(CamelModel):
     """A node in a subgraph result."""
 

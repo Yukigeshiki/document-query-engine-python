@@ -10,6 +10,8 @@ from app.core.errors import ServiceUnavailableError
 from app.core.rate_limit import limiter
 from app.dependencies import get_kg_service, get_upload_service
 from app.models.knowledge_graph import (
+    DocumentInfo,
+    DocumentListResponse,
     IngestRequest,
     IngestResponse,
     QueryResponse,
@@ -25,6 +27,24 @@ from app.worker.tasks import ingest_source_task
 logger = structlog.stdlib.get_logger(__name__)
 
 router = APIRouter(prefix="/kg", tags=["knowledge-graph"])
+
+
+@router.get("/documents", response_model=DocumentListResponse)
+@limiter.limit(settings.rate_limit_default)
+async def list_documents(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100, description="Max documents to return"),
+    offset: int = Query(default=0, ge=0, description="Number of documents to skip"),
+    service: KnowledgeGraphService = Depends(get_kg_service),
+) -> DocumentListResponse:
+    """List ingested documents with pagination (newest first)."""
+    docs, total = await service.list_documents(limit=limit, offset=offset)
+    return DocumentListResponse(
+        documents=[DocumentInfo(**doc) for doc in docs],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post("/ingest", response_model=IngestResponse)
@@ -132,3 +152,15 @@ async def get_subgraph(
     """Retrieve a subgraph around a specific entity from Neo4j."""
     nodes, edges = await service.get_subgraph(entity=entity, depth=depth)
     return SubgraphResponse(entity=entity, depth=depth, nodes=nodes, edges=edges)
+
+
+@router.get("/documents/graph", response_model=SubgraphResponse)
+@limiter.limit(settings.rate_limit_default)
+async def get_document_graph(
+    request: Request,
+    doc_ids: list[str] = Query(..., max_length=10, description="Document IDs (supports multi-chunk docs, max 10)"),
+    service: KnowledgeGraphService = Depends(get_kg_service),
+) -> SubgraphResponse:
+    """Retrieve the graph for a specific ingested document."""
+    nodes, edges = await service.get_document_graph(doc_ids=doc_ids)
+    return SubgraphResponse(entity=doc_ids[0], depth=0, nodes=nodes, edges=edges)
