@@ -32,6 +32,7 @@ from app.core.config import Settings as AppSettings
 from app.core.errors import IngestionError, QueryError, ServiceUnavailableError
 from app.models.knowledge_graph import RetrievalMode, SourceNodeInfo, SubgraphEdge, SubgraphNode
 from app.services.dual_retriever import DualRetriever
+from app.services.query_cache import QueryCache
 
 logger = structlog.stdlib.get_logger(__name__)
 
@@ -42,8 +43,9 @@ VECTOR_INDEX_ID = "vector_index"
 class KnowledgeGraphService:
     """Manages KG and vector indexes with Neo4j, PostgreSQL, or in-memory stores."""
 
-    def __init__(self, config: AppSettings) -> None:
+    def __init__(self, config: AppSettings, cache: QueryCache | None = None) -> None:
         """Initialize LlamaIndex settings, stores, and indexes."""
+        self._cache = cache
         logger.info(
             "initializing_knowledge_graph_service",
             llm_model=config.llm_model,
@@ -211,7 +213,7 @@ class KnowledgeGraphService:
             self._neo4j_store.close()
             logger.info("neo4j_connection_closed")
 
-    async def check_health(self) -> dict[str, str]:
+    async def check_graph_store_health(self) -> dict[str, str]:
         """
         Check graph store connectivity.
 
@@ -248,6 +250,13 @@ class KnowledgeGraphService:
             return {"status": "ok", "backend": "pgvector"}
         except Exception as exc:
             return {"status": "degraded", "backend": "pgvector", "error": str(exc)}
+
+    async def check_cache_health(self) -> dict[str, str] | None:
+        """Check query cache connectivity. Returns None if cache is not enabled."""
+        if self._cache is None:
+            return None
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._cache.check_health)
 
     async def ingest(
         self,
@@ -303,6 +312,9 @@ class KnowledgeGraphService:
         except Exception as exc:
             logger.error("ingestion_failed", document_id=doc_id, error=str(exc))
             raise IngestionError(detail=f"Failed to ingest document: {exc}") from exc
+        finally:
+            if self._cache is not None:
+                await self._cache.invalidate()
 
     async def query(
         self,
@@ -329,6 +341,19 @@ class KnowledgeGraphService:
                 mode = RetrievalMode.KG_ONLY
 
             def _query_sync() -> tuple[str, list[SourceNodeInfo]]:
+                # Check semantic cache (blocking I/O — runs in executor)
+                # Embed once and reuse for both get() and set()
+                query_embedding: list[float] | None = None
+                if self._cache is not None:
+                    query_embedding = self._cache.embed_query(query_text)
+                    cached = self._cache.get(
+                        query_text, include_text, response_mode, retrieval_mode,
+                        embedding=query_embedding,
+                    )
+                    if cached is not None:
+                        response_text, source_nodes, _ = cached
+                        return response_text, source_nodes
+
                 kg_retriever = self._index.as_retriever(include_text=include_text)
                 vector_retriever = self._vector_index.as_retriever(
                     similarity_top_k=self._vector_top_k
@@ -355,6 +380,15 @@ class KnowledgeGraphService:
                     )
                     for node in response.source_nodes
                 ]
+
+                # Store in cache, reusing pre-computed embedding
+                if self._cache is not None:
+                    self._cache.set(
+                        query_text, include_text, response_mode, retrieval_mode,
+                        str(response), source_nodes,
+                        embedding=query_embedding,
+                    )
+
                 return str(response), source_nodes
 
             response_text, source_nodes = await loop.run_in_executor(

@@ -24,7 +24,7 @@ def mock_kg_service() -> AsyncMock:
         [SubgraphNode(id="Alice"), SubgraphNode(id="Acme Corp", label="Organization")],
         [SubgraphEdge(source="Alice", target="Acme Corp", relation="WORKS_AT")],
     )
-    service.check_health.return_value = {"status": "ok", "backend": "in_memory"}
+    service.check_graph_store_health.return_value = {"status": "ok", "backend": "in_memory"}
     return service
 
 

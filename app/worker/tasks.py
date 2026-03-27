@@ -16,6 +16,7 @@ from app.core.logging import setup_logging
 from app.models.knowledge_graph import SourceType
 from app.services.ingestion_pipeline import IngestionPipeline
 from app.services.knowledge_graph import KnowledgeGraphService
+from app.services.query_cache import create_query_cache
 from app.worker.celery_app import celery_app
 
 logger = structlog.stdlib.get_logger(__name__)
@@ -36,7 +37,9 @@ def _get_kg_service() -> KnowledgeGraphService:
     if _kg_service is None:
         setup_logging()
         logger.info("initializing_kg_service_in_worker")
-        _kg_service = KnowledgeGraphService(settings)
+        _kg_service = KnowledgeGraphService(
+            settings, cache=create_query_cache(settings)
+        )
         register_default_connectors(settings)
     return _kg_service
 

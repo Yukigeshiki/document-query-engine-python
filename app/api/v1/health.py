@@ -19,11 +19,14 @@ async def health_check(
     components: dict[str, ComponentHealth] = {}
 
     if kg_service is not None:
-        graph_health = await kg_service.check_health()
+        graph_health = await kg_service.check_graph_store_health()
         components["graph_store"] = ComponentHealth(**graph_health)
         vector_health = await kg_service.check_vector_store_health()
         if vector_health:
             components["vector_store"] = ComponentHealth(**vector_health)
+        cache_health = await kg_service.check_cache_health()
+        if cache_health:
+            components["query_cache"] = ComponentHealth(**cache_health)
 
     overall = "ok"
     status_code = 200

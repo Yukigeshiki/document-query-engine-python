@@ -18,7 +18,7 @@ def mock_kg_service() -> AsyncMock:
     """Create a mock KnowledgeGraphService."""
     service = AsyncMock()
     service.query.return_value = ("response", [])
-    service.check_health.return_value = {"status": "ok", "backend": "in_memory"}
+    service.check_graph_store_health.return_value = {"status": "ok", "backend": "in_memory"}
     service.check_vector_store_health.return_value = None
     return service
 

@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     # Uploads
     upload_storage: str = ""
 
+    # Cache
+    cache_ttl_seconds: int = 86400  # 24 hours
+    cache_similarity_threshold: float = 0.95  # needs tuning with real queries
+
     # Rate limiting
     rate_limit_default: str = "60/minute"
     rate_limit_query: str = "30/minute"

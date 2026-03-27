@@ -23,8 +23,9 @@ async def test_health_check(client: AsyncClient) -> None:
 async def test_health_check_with_graph_store() -> None:
     """Verify health endpoint includes graph store component health."""
     mock_service = AsyncMock()
-    mock_service.check_health.return_value = {"status": "ok", "backend": "in_memory"}
+    mock_service.check_graph_store_health.return_value = {"status": "ok", "backend": "in_memory"}
     mock_service.check_vector_store_health.return_value = None
+    mock_service.check_cache_health.return_value = None
 
     app = create_app()
     app.dependency_overrides[get_optional_kg_service] = lambda: mock_service
@@ -46,12 +47,13 @@ async def test_health_check_with_graph_store() -> None:
 async def test_health_check_degraded() -> None:
     """Verify health reports degraded when graph store is unhealthy."""
     mock_service = AsyncMock()
-    mock_service.check_health.return_value = {
+    mock_service.check_graph_store_health.return_value = {
         "status": "degraded",
         "backend": "neo4j",
         "error": "connection refused",
     }
     mock_service.check_vector_store_health.return_value = None
+    mock_service.check_cache_health.return_value = None
 
     app = create_app()
     app.dependency_overrides[get_optional_kg_service] = lambda: mock_service
