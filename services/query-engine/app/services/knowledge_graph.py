@@ -195,6 +195,19 @@ class KnowledgeGraphService:
         logger.info("vector_index_created_new")
         return index
 
+    def _reload_kg_index(self) -> None:
+        """Reload the KG index from storage to pick up worker-side changes."""
+        if not self._postgres_enabled:
+            return
+        try:
+            self._index = load_index_from_storage(
+                storage_context=self._storage_context,
+                index_id=KG_INDEX_ID,
+            )
+            logger.info("kg_index_reloaded_from_storage")
+        except (ValueError, KeyError):
+            logger.warning("kg_index_reload_failed")
+
     def _count_triplets(self) -> int:
         """Count the number of triplets in the graph store."""
         if self._neo4j_enabled:
@@ -618,18 +631,25 @@ class KnowledgeGraphService:
 
         loop = asyncio.get_running_loop()
 
-        def _get_doc_graph_sync() -> tuple[list[SubgraphNode], list[SubgraphEdge]]:
-            # Get the node IDs for all chunks of this document
+        def _find_doc_entities() -> tuple[set[str], bool]:
+            """
+            Find entities in the index table that belong to the given doc IDs.
+
+            Returns (entities, had_node_ids) where had_node_ids indicates
+            whether the docs were found in the docstore with node IDs.
+            """
             ref_info = self._storage_context.docstore.get_all_ref_doc_info()
             if not ref_info:
-                return [], []
+                return set(), False
 
             doc_node_ids: set[str] = set()
             for did in doc_ids:
                 if did in ref_info:
                     doc_node_ids.update(ref_info[did].node_ids)
 
-            # Guard against LlamaIndex internal structure changes
+            if not doc_node_ids:
+                return set(), False
+
             index_struct = getattr(self._index, "_index_struct", None)
             table = getattr(index_struct, "table", None) if index_struct else None
             if table is None:
@@ -637,18 +657,28 @@ class KnowledgeGraphService:
                     "kg_index_struct_unavailable",
                     msg="Cannot access KG index table — LlamaIndex internals may have changed",
                 )
-                return [], []
+                return set(), True
 
-            # Find entities that belong to this document's nodes
-            doc_entities: set[str] = set()
+            entities: set[str] = set()
             for entity, node_ids in table.items():
                 if doc_node_ids & node_ids:
-                    doc_entities.add(entity)
+                    entities.add(entity)
+            return entities, True
+
+        def _get_doc_graph_sync() -> tuple[list[SubgraphNode], list[SubgraphEdge]]:
+            doc_entities, had_node_ids = _find_doc_entities()
+
+            # Only reload if the doc has node IDs in the docstore but no
+            # matching entities in the index table — this means the in-memory
+            # index is likely stale (worker ingested after API startup).
+            # Skip reload for unknown doc IDs or docs not in the docstore.
+            if not doc_entities and had_node_ids:
+                self._reload_kg_index()
+                doc_entities, _ = _find_doc_entities()
 
             if not doc_entities:
                 return [], []
 
-            # Fetch relationships for these entities from Neo4j
             entity_list = list(doc_entities)
             cypher = (
                 "MATCH (src)-[rel]->(tgt) "

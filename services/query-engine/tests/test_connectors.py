@@ -81,9 +81,16 @@ class TestFilesystemConnector:
 class TestGCSConnector:
     """Tests for the GCS connector."""
 
-    @patch("app.connectors.gcs.GCSReader")
-    def test_loads_documents(self, mock_reader_cls: MagicMock) -> None:
-        """Verify loading documents from GCS."""
+    @patch("app.connectors.gcs.SimpleDirectoryReader")
+    @patch("app.connectors.gcs.gcs_storage")
+    def test_loads_documents(self, mock_gcs: MagicMock, mock_reader_cls: MagicMock) -> None:
+        """Verify loading documents from GCS via download-to-temp."""
+        mock_blob = MagicMock()
+        mock_blob.name = "docs/report.txt"
+        mock_bucket = MagicMock()
+        mock_bucket.list_blobs.return_value = [mock_blob]
+        mock_gcs.Client.return_value.bucket.return_value = mock_bucket
+
         mock_doc = MagicMock()
         mock_reader_cls.return_value.load_data.return_value = [mock_doc]
 
@@ -91,7 +98,9 @@ class TestGCSConnector:
         docs = list(connector.load_documents({"prefix": "docs/"}))
 
         assert len(docs) == 1
-        mock_reader_cls.assert_called_once_with(bucket="my-bucket", prefix="docs/")
+        mock_gcs.Client.return_value.bucket.assert_called_once_with("my-bucket")
+        mock_bucket.list_blobs.assert_called_once_with(prefix="docs/")
+        mock_blob.download_to_filename.assert_called_once()
 
     def test_missing_bucket_raises(self) -> None:
         """Verify BadRequestError when no bucket is configured."""
@@ -99,12 +108,15 @@ class TestGCSConnector:
         with pytest.raises(BadRequestError, match="requires 'bucket'"):
             list(connector.load_documents({}))
 
-    @patch("app.connectors.gcs.GCSReader")
-    def test_config_bucket_overrides_default(self, mock_reader_cls: MagicMock) -> None:
+    @patch("app.connectors.gcs.SimpleDirectoryReader")
+    @patch("app.connectors.gcs.gcs_storage")
+    def test_config_bucket_overrides_default(self, mock_gcs: MagicMock, mock_reader_cls: MagicMock) -> None:
         """Verify per-request bucket overrides the default."""
-        mock_reader_cls.return_value.load_data.return_value = []
+        mock_bucket = MagicMock()
+        mock_bucket.list_blobs.return_value = []
+        mock_gcs.Client.return_value.bucket.return_value = mock_bucket
 
         connector = GCSConnector(gcs_bucket="default-bucket")
         list(connector.load_documents({"bucket": "override-bucket"}))
 
-        mock_reader_cls.assert_called_once_with(bucket="override-bucket", prefix="")
+        mock_gcs.Client.return_value.bucket.assert_called_once_with("override-bucket")

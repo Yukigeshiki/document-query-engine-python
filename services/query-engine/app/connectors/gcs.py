@@ -1,12 +1,15 @@
 """Google Cloud Storage document connector."""
 
+import tempfile
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import structlog
-from llama_index.core import Document
-from llama_index.readers.gcs import GCSReader
+from google.cloud import storage as gcs_storage  # type: ignore[import-untyped]
+from llama_index.core import Document, SimpleDirectoryReader
 
+from app.connectors import SUPPORTED_EXTENSIONS
 from app.connectors.base import BaseConnector
 from app.core.errors import BadRequestError, ConnectorError
 
@@ -25,36 +28,74 @@ class GCSConnector(BaseConnector):
         """
         Yield documents from GCS.
 
+        Downloads blobs to a temp directory, then reads them with
+        SimpleDirectoryReader. This avoids gcsfs reliability issues.
+
         Config keys:
             bucket (str): GCS bucket name. Falls back to default from Settings.
             prefix (str): Object key prefix to filter by. Default "".
         """
-        bucket = config.get("bucket") or self._gcs_bucket
-        if not bucket:
+        bucket_name = config.get("bucket") or self._gcs_bucket
+        if not bucket_name:
             raise BadRequestError(
                 detail="GCS connector requires 'bucket' in config or GCS_BUCKET env var"
             )
 
         prefix = str(config.get("prefix", ""))
 
-        reader_kwargs: dict[str, Any] = {"bucket": bucket, "prefix": prefix}
-        if self._gcs_credentials_path:
-            reader_kwargs["service_account_key_path"] = self._gcs_credentials_path
-
         try:
-            reader = GCSReader(**reader_kwargs)
-            documents: list[Document] = reader.load_data()
+            if self._gcs_credentials_path:
+                client = gcs_storage.Client.from_service_account_json(
+                    self._gcs_credentials_path
+                )
+            else:
+                client = gcs_storage.Client()
+
+            bucket = client.bucket(bucket_name)
+            blobs = list(bucket.list_blobs(prefix=prefix))
+
+            if not blobs:
+                logger.info("gcs_no_blobs_found", bucket=bucket_name, prefix=prefix)
+                return
+
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                tmp_path = Path(tmp_dir)
+                downloaded = 0
+
+                for blob in blobs:
+                    if blob.name.endswith("/"):
+                        continue
+                    # Preserve directory structure to avoid overwrites
+                    # when blobs in different folders share the same filename
+                    local_file = tmp_path / blob.name
+                    local_file.parent.mkdir(parents=True, exist_ok=True)
+                    blob.download_to_filename(str(local_file))
+                    downloaded += 1
+
+                if downloaded == 0:
+                    logger.info("gcs_no_files_downloaded", bucket=bucket_name, prefix=prefix)
+                    return
+
+                reader = SimpleDirectoryReader(
+                    input_dir=str(tmp_path),
+                    recursive=True,
+                    required_exts=SUPPORTED_EXTENSIONS,
+                )
+
+                documents = reader.load_data()
+
+                logger.info(
+                    "gcs_documents_loaded",
+                    bucket=bucket_name,
+                    prefix=prefix,
+                    blobs=downloaded,
+                    documents=len(documents),
+                )
+                yield from documents
+
         except (BadRequestError, ConnectorError):
             raise
         except Exception as exc:
             raise ConnectorError(
-                detail=f"Failed to read documents from gs://{bucket}/{prefix}: {exc}"
+                detail=f"Failed to read documents from gs://{bucket_name}/{prefix}: {exc}"
             ) from exc
-
-        logger.info(
-            "gcs_documents_loaded",
-            bucket=bucket,
-            prefix=prefix,
-            count=len(documents),
-        )
-        yield from documents
