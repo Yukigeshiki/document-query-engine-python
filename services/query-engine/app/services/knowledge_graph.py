@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import structlog
-from sqlalchemy import create_engine
+from sqlalchemy import Engine
 from llama_index.core import (
     Document,
     KnowledgeGraphIndex,
@@ -68,9 +68,20 @@ VECTOR_INDEX_ID = "vector_index"
 class KnowledgeGraphService:
     """Manages KG and vector indexes with Neo4j, PostgreSQL, or in-memory stores."""
 
-    def __init__(self, config: AppSettings, cache: QueryCache | None = None) -> None:
+    def __init__(
+        self,
+        config: AppSettings,
+        cache: QueryCache | None = None,
+        engine: Engine | None = None,
+    ) -> None:
         """Initialize LlamaIndex settings, stores, and indexes."""
+        if config.postgres_enabled and config.postgres_uri and engine is None:
+            raise ValueError(
+                "A shared SQLAlchemy engine is required when PostgreSQL is enabled. "
+                "Create one with get_pg_engine() and pass it to KnowledgeGraphService."
+            )
         self._cache = cache
+        self._engine = engine
         logger.info(
             "initializing_knowledge_graph_service",
             llm_model=config.llm_model,
@@ -134,10 +145,6 @@ class KnowledgeGraphService:
 
         try:
             parsed = urlparse(config.postgres_uri)
-            # pool_pre_ping tests each connection before use and silently
-            # replaces dead ones, so a PostgreSQL restart doesn't require
-            # restarting the API server or worker.
-            engine_kwargs = {"pool_pre_ping": True}
 
             vector_store = PGVectorStore.from_params(
                 host=parsed.hostname or "localhost",
@@ -148,16 +155,28 @@ class KnowledgeGraphService:
                 embed_dim=config.embed_dim,
                 hybrid_search=True,
                 text_search_config="english",
-                create_engine_kwargs=engine_kwargs,
+                create_engine_kwargs={"pool_pre_ping": True},
             )
 
-            # Share a single engine with pool_pre_ping for docstore and index store
-            pg_engine = create_engine(config.postgres_uri, **engine_kwargs)
+            # Use the shared engine (with pool_pre_ping) for docstore and index store.
+            # PostgresKVStore requires an async connection string even when
+            # using a sync engine.
+            sync_parsed = urlparse(config.postgres_uri)
+            async_uri = sync_parsed._replace(
+                scheme="postgresql+asyncpg"
+            ).geturl()
+            pg_engine = self._engine
             doc_kvstore = PostgresKVStore(
-                table_name="docstore", engine=pg_engine, perform_setup=True,
+                table_name="docstore",
+                engine=pg_engine,
+                async_connection_string=async_uri,
+                perform_setup=True,
             )
             index_kvstore = PostgresKVStore(
-                table_name="indexstore", engine=pg_engine, perform_setup=True,
+                table_name="indexstore",
+                engine=pg_engine,
+                async_connection_string=async_uri,
+                perform_setup=True,
             )
             docstore = PostgresDocumentStore(postgres_kvstore=doc_kvstore)
             index_store = PostgresIndexStore(postgres_kvstore=index_kvstore)

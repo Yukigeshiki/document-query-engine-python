@@ -10,6 +10,7 @@ from app.connectors.setup import register_default_connectors
 from app.core.config import settings
 from app.core.gcs import get_gcs_client
 from app.core.logging import setup_logging
+from app.core.postgres import get_pg_engine
 from app.models.knowledge_graph import SourceType
 from app.services.ingestion_pipeline import IngestionPipeline
 from app.services.knowledge_graph import KnowledgeGraphService
@@ -34,8 +35,10 @@ def _get_kg_service() -> KnowledgeGraphService:
     if _kg_service is None:
         setup_logging()
         logger.info("initializing_kg_service_in_worker")
+        pg_engine = get_pg_engine(settings.postgres_uri) if settings.postgres_enabled and settings.postgres_uri else None
+        cache = create_query_cache(settings, engine=pg_engine)
         _kg_service = KnowledgeGraphService(
-            settings, cache=create_query_cache(settings)
+            settings, cache=cache, engine=pg_engine
         )
         if settings.gcs_bucket:
             gcs_client = get_gcs_client(settings)

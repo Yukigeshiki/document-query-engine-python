@@ -39,7 +39,7 @@
       <!-- Loading -->
       <div v-if="isLoading" class="flex items-center gap-3 rounded-lg border border-border p-6">
         <Loader2 class="h-5 w-5 animate-spin text-primary" />
-        <span class="text-sm font-medium">Querying knowledge graph...</span>
+        <span class="text-sm font-medium">Querying your documents...</span>
       </div>
 
       <!-- Error -->

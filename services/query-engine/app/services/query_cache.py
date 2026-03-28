@@ -3,19 +3,15 @@
 import asyncio
 import hashlib
 import json
-from collections.abc import Generator
-from contextlib import contextmanager
 
-import psycopg2  # type: ignore[import-untyped]
-import psycopg2.pool  # type: ignore[import-untyped]
 import redis
 import structlog
 from llama_index.core import Settings
-from psycopg2 import Error as PgError
-from psycopg2.extensions import connection as pg_connection  # type: ignore[import-untyped]
+from sqlalchemy import Engine, text
 
 from app.core.config import Settings as AppSettings
 from app.core.metrics import kg_cache_invalidations_total, kg_cache_similarity_score
+from app.core.postgres import get_pg_engine
 from app.models.knowledge_graph import ResponseMode, RetrievalMode, SourceNodeInfo
 
 logger = structlog.stdlib.get_logger(__name__)
@@ -30,14 +26,14 @@ class QueryCache:
 
     Embeds query text and searches for similar cached queries by cosine
     similarity in pgvector, filtered by query parameters. Response
-    payloads are stored in Redis with TTL. Uses connection pooling for
-    PostgreSQL to avoid per-operation connection overhead.
+    payloads are stored in Redis with TTL. Uses a shared SQLAlchemy
+    engine with pool_pre_ping for automatic stale connection recovery.
     """
 
     def __init__(
         self,
         redis_url: str,
-        postgres_uri: str,
+        engine: Engine,
         ttl: int,
         threshold: float,
         embed_dim: int,
@@ -46,62 +42,37 @@ class QueryCache:
         self._threshold = threshold
         self._embed_dim = embed_dim
         self._redis = redis.Redis.from_url(redis_url)
-        self._pool = psycopg2.pool.ThreadedConnectionPool(
-            minconn=1, maxconn=5, dsn=postgres_uri
-        )
+        self._engine = engine
         self._ensure_table()
-
-    @contextmanager
-    def _pg_conn(self) -> Generator[pg_connection, None, None]:
-        """
-        Get a pooled PG connection, replacing stale connections automatically.
-
-        psycopg2 marks connections as closed when the server drops them
-        (e.g. after a PostgreSQL restart). We check before yielding, so
-        callers never see a dead connection and discard any that break
-        mid-use so the pool replaces them on the next call.
-        """
-        conn = self._pool.getconn()
-        if conn.closed:
-            self._pool.putconn(conn, close=True)
-            conn = self._pool.getconn()
-        try:
-            yield conn
-        finally:
-            if conn.closed:
-                self._pool.putconn(conn, close=True)
-            else:
-                self._pool.putconn(conn)
 
     def _ensure_table(self) -> None:
         """Create the cache embeddings table and index if they don't exist."""
         try:
-            with self._pg_conn() as conn:
-                with conn.cursor() as cur:
-                    # pgvector extension should be pre-installed in production.
-                    # This handles dev/Docker where the app user has superuser rights.
-                    try:
-                        cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
-                    except PgError:
-                        conn.rollback()
-                        logger.info(
-                            "pgvector_extension_not_created_assuming_pre_installed"
-                        )
-                    cur.execute(f"""
-                        CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
-                            id SERIAL PRIMARY KEY,
-                            cache_key TEXT UNIQUE NOT NULL,
-                            include_text BOOLEAN NOT NULL,
-                            response_mode TEXT NOT NULL,
-                            retrieval_mode TEXT NOT NULL,
-                            query_embedding vector({self._embed_dim})
-                        )
-                    """)
-                    cur.execute(f"""
-                        CREATE INDEX IF NOT EXISTS idx_{TABLE_NAME}_embedding
-                        ON {TABLE_NAME}
-                        USING hnsw (query_embedding vector_cosine_ops)
-                    """)
+            with self._engine.connect() as conn:
+                # pgvector extension should be pre-installed in production.
+                # This handles dev/Docker where the app user has superuser rights.
+                try:
+                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                except Exception:
+                    conn.rollback()
+                    logger.info(
+                        "pgvector_extension_not_created_assuming_pre_installed"
+                    )
+                conn.execute(text(f"""
+                    CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
+                        id SERIAL PRIMARY KEY,
+                        cache_key TEXT UNIQUE NOT NULL,
+                        include_text BOOLEAN NOT NULL,
+                        response_mode TEXT NOT NULL,
+                        retrieval_mode TEXT NOT NULL,
+                        query_embedding vector({self._embed_dim})
+                    )
+                """))
+                conn.execute(text(f"""
+                    CREATE INDEX IF NOT EXISTS idx_{TABLE_NAME}_embedding
+                    ON {TABLE_NAME}
+                    USING hnsw (query_embedding vector_cosine_ops)
+                """))
                 conn.commit()
             logger.info("query_cache_table_ready")
         except Exception as exc:
@@ -110,12 +81,11 @@ class QueryCache:
     def _delete_embedding(self, cache_key: str) -> None:
         """Remove an orphaned embedding row whose Redis payload has expired."""
         try:
-            with self._pg_conn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        f"DELETE FROM {TABLE_NAME} WHERE cache_key = %s",
-                        (cache_key,),
-                    )
+            with self._engine.connect() as conn:
+                conn.execute(
+                    text(f"DELETE FROM {TABLE_NAME} WHERE cache_key = :key"),
+                    {"key": cache_key},
+                )
                 conn.commit()
             logger.info("query_cache_orphan_cleaned", cache_key=cache_key[:12])
         except Exception as exc:
@@ -163,27 +133,25 @@ class QueryCache:
                 embedding = self.embed_query(query_text)
             embedding_str = self._embedding_to_str(embedding)
 
-            with self._pg_conn() as conn, conn.cursor() as cur:
-                cur.execute(
-                    f"""
+            with self._engine.connect() as conn:
+                row = conn.execute(
+                    text(f"""
                         SELECT cache_key,
-                               1 - (query_embedding <=> %s::vector) AS similarity
+                               1 - (query_embedding <=> CAST(:emb AS vector)) AS similarity
                         FROM {TABLE_NAME}
-                        WHERE include_text = %s
-                          AND response_mode = %s
-                          AND retrieval_mode = %s
-                        ORDER BY query_embedding <=> %s::vector
+                        WHERE include_text = :include_text
+                          AND response_mode = :response_mode
+                          AND retrieval_mode = :retrieval_mode
+                        ORDER BY query_embedding <=> CAST(:emb AS vector)
                         LIMIT 1
-                        """,
-                    (
-                        embedding_str,
-                        include_text,
-                        response_mode,
-                        retrieval_mode,
-                        embedding_str,
-                    ),
-                )
-                row = cur.fetchone()
+                    """),
+                    {
+                        "emb": embedding_str,
+                        "include_text": include_text,
+                        "response_mode": str(response_mode),
+                        "retrieval_mode": str(retrieval_mode),
+                    },
+                ).fetchone()
 
             if row is None:
                 return None
@@ -243,25 +211,25 @@ class QueryCache:
             embedding_str = self._embedding_to_str(embedding)
 
             # Store embedding + params in pgvector
-            with self._pg_conn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        f"""
+            with self._engine.connect() as conn:
+                conn.execute(
+                    text(f"""
                         INSERT INTO {TABLE_NAME}
                             (cache_key, include_text, response_mode, retrieval_mode,
                              query_embedding)
-                        VALUES (%s, %s, %s, %s, %s::vector)
+                        VALUES (:cache_key, :include_text, :response_mode,
+                                :retrieval_mode, CAST(:emb AS vector))
                         ON CONFLICT (cache_key) DO UPDATE SET
                             query_embedding = EXCLUDED.query_embedding
-                        """,
-                        (
-                            cache_key,
-                            include_text,
-                            response_mode,
-                            retrieval_mode,
-                            embedding_str,
-                        ),
-                    )
+                    """),
+                    {
+                        "cache_key": cache_key,
+                        "include_text": include_text,
+                        "response_mode": str(response_mode),
+                        "retrieval_mode": str(retrieval_mode),
+                        "emb": embedding_str,
+                    },
+                )
                 conn.commit()
 
             # Store payload in Redis with TTL
@@ -290,8 +258,8 @@ class QueryCache:
     def _invalidate_sync(self) -> None:
         """Synchronous cache invalidation."""
         try:
-            with self._pg_conn() as conn, conn.cursor() as cur:
-                cur.execute(f"DELETE FROM {TABLE_NAME}")
+            with self._engine.connect() as conn:
+                conn.execute(text(f"DELETE FROM {TABLE_NAME}"))
                 conn.commit()
 
             for key in self._redis.scan_iter(f"{CACHE_KEY_PREFIX}*"):
@@ -306,8 +274,8 @@ class QueryCache:
     def check_health(self) -> dict[str, str]:
         """Check cache backend connectivity."""
         try:
-            with self._pg_conn() as conn, conn.cursor() as cur:
-                cur.execute(f"SELECT COUNT(*) FROM {TABLE_NAME}")
+            with self._engine.connect() as conn:
+                conn.execute(text(f"SELECT COUNT(*) FROM {TABLE_NAME}"))
             self._redis.ping()
             return {"status": "ok", "backend": "redis+pgvector"}
         except Exception as exc:
@@ -318,14 +286,16 @@ class QueryCache:
             }
 
 
-def create_query_cache(config: AppSettings) -> QueryCache | None:
+def create_query_cache(config: AppSettings, engine: Engine | None = None) -> QueryCache | None:
     """Create a QueryCache if Redis and PostgreSQL are configured. Returns None otherwise."""
     if not config.celery_broker_url or not config.postgres_uri:
         return None
     try:
+        if engine is None:
+            engine = get_pg_engine(config.postgres_uri)
         return QueryCache(
             redis_url=config.celery_broker_url,
-            postgres_uri=config.postgres_uri,
+            engine=engine,
             ttl=config.cache_ttl_seconds,
             threshold=config.cache_similarity_threshold,
             embed_dim=config.embed_dim,

@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.core.error_handlers import register_error_handlers
 from app.core.gcs import get_gcs_client
 from app.core.logging import setup_logging
+from app.core.postgres import get_pg_engine
 from app.core.middleware import RequestContextMiddleware
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
 from app.services.knowledge_graph import KnowledgeGraphService
@@ -44,8 +45,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Handle application startup and shutdown events."""
     setup_logging()
     logger.info("starting", app_name=settings.app_name, version=settings.app_version)
+    pg_engine = get_pg_engine(settings.postgres_uri) if settings.postgres_enabled and settings.postgres_uri else None
+    cache = create_query_cache(settings, engine=pg_engine)
     _app.state.kg_service = KnowledgeGraphService(
-        settings, cache=create_query_cache(settings)
+        settings, cache=cache, engine=pg_engine
     )
     if settings.gcs_bucket:
         gcs_client = get_gcs_client(settings)
