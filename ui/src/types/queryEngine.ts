@@ -53,3 +53,20 @@ export interface DocumentListResponse {
   limit: number
   offset: number
 }
+
+export interface SourceNodeMetadata {
+  fileName: string | null
+}
+
+export interface SourceNodeInfo {
+  sourceType: 'kg' | 'vector'
+  score: number | null
+  metadata: SourceNodeMetadata
+}
+
+export interface QueryResponse {
+  response: string
+  sourceNodes: SourceNodeInfo[]
+}
+
+export type RetrievalMode = 'dual' | 'kg_only' | 'vector_only'

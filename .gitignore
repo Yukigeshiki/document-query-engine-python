@@ -11,4 +11,6 @@
 # OS
 .DS_Store
 
-gcs-sa-key.json
+*-key.json
+
+/review

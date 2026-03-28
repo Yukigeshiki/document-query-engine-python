@@ -23,6 +23,26 @@ class RetrievalMode(StrEnum):
     DUAL = "dual"
 
 
+class ResponseMode(StrEnum):
+    """Supported LlamaIndex response synthesizer modes."""
+
+    TREE_SUMMARIZE = "tree_summarize"
+    COMPACT = "compact"
+    REFINE = "refine"
+    SIMPLE_SUMMARIZE = "simple_summarize"
+    NO_TEXT = "no_text"
+    ACCUMULATE = "accumulate"
+
+
+class QueryRequest(CamelModel):
+    """Request body for knowledge graph queries."""
+
+    query: str = Field(..., min_length=1, description="Natural language query")
+    include_text: bool = Field(default=True)
+    response_mode: ResponseMode = Field(default=ResponseMode.TREE_SUMMARIZE)
+    retrieval_mode: RetrievalMode = Field(default=RetrievalMode.DUAL)
+
+
 class IngestRequest(CamelModel):
     """Request body for document ingestion."""
 
@@ -46,12 +66,25 @@ class SourceIngestRequest(CamelModel):
     config: dict[str, Any] = Field(..., description="Source-specific configuration")
 
 
+class SourceRetrievalType(StrEnum):
+    """Indicates which retriever produced a source node."""
+
+    KG = "kg"
+    VECTOR = "vector"
+
+
+class SourceNodeMetadata(CamelModel):
+    """Typed metadata for a source node."""
+
+    file_name: str | None = None
+
+
 class SourceNodeInfo(CamelModel):
     """Information about a source node returned from a query."""
 
-    text: str
+    source_type: SourceRetrievalType = SourceRetrievalType.VECTOR
     score: float | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: SourceNodeMetadata = Field(default_factory=SourceNodeMetadata)
 
 
 class QueryResponse(CamelModel):

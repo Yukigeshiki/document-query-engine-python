@@ -1,6 +1,6 @@
 <template>
   <AppLayout>
-    <div class="max-w-4xl mx-auto space-y-6">
+    <div class="max-w-6xl mx-auto space-y-6">
       <div class="flex items-center justify-between">
         <div>
           <h1 class="text-2xl font-bold">Upload Document</h1>

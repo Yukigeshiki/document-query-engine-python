@@ -3,6 +3,8 @@
 import { apiClient } from './api'
 import type {
   DocumentListResponse,
+  QueryResponse,
+  RetrievalMode,
   SubgraphResponse,
   TaskStatusResponse,
   UploadAcceptedResponse,
@@ -85,6 +87,24 @@ export async function getDocumentGraph(docIds: string[]): Promise<SubgraphRespon
   const { data } = await apiClient.get<SubgraphResponse>(
     '/api/v1/kg/documents/graph',
     { params: { doc_ids: docIds } },
+  )
+  return data
+}
+
+/**
+ * Query the knowledge graph with a natural language question.
+ *
+ * @param query - The question to ask.
+ * @param retrievalMode - Retrieval strategy: dual, kg_only, or vector_only.
+ * @returns The response text and source nodes.
+ */
+export async function queryKnowledgeGraph(
+  query: string,
+  retrievalMode: RetrievalMode = 'dual',
+): Promise<QueryResponse> {
+  const { data } = await apiClient.post<QueryResponse>(
+    '/api/v1/kg/query',
+    { query, retrievalMode },
   )
   return data
 }

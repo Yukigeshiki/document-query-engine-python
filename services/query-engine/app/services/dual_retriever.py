@@ -3,7 +3,7 @@
 from llama_index.core.retrievers import BaseRetriever
 from llama_index.core.schema import NodeWithScore, QueryBundle
 
-from app.models.knowledge_graph import RetrievalMode
+from app.models.knowledge_graph import RetrievalMode, SourceRetrievalType
 
 # LlamaIndex KG retriever returns this synthetic node when it finds nothing
 _KG_MISS_SENTINEL = "No relationships found."
@@ -44,12 +44,14 @@ class DualRetriever(BaseRetriever):
             for node in self._kg_retriever.retrieve(query_bundle):
                 if node.node.get_content() == _KG_MISS_SENTINEL:
                     continue
+                node.node.metadata["_source_type"] = SourceRetrievalType.KG
                 results[node.node.node_id] = node
 
         if self._mode in (RetrievalMode.VECTOR_ONLY, RetrievalMode.DUAL):
             for node in self._vector_retriever.retrieve(query_bundle):
                 existing = results.get(node.node.node_id)
                 if existing is None or (node.score or 0) > (existing.score or 0):
+                    node.node.metadata["_source_type"] = SourceRetrievalType.VECTOR
                     results[node.node.node_id] = node
 
         return sorted(

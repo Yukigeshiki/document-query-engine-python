@@ -63,14 +63,14 @@ const { isExpanded, toggle } = useSidebar()
 
 const navItems: NavItem[] = [
   {
-    path: '/upload',
-    label: 'Upload Document',
-    icon: Upload,
-  },
-  {
     path: '/query',
     label: 'Query KG',
     icon: Search,
+  },
+  {
+    path: '/upload',
+    label: 'Upload Document',
+    icon: Upload,
   },
 ]
 

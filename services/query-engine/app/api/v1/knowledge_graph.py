@@ -1,7 +1,5 @@
 """Knowledge graph query, ingestion, and subgraph endpoints."""
 
-from typing import Literal
-
 import structlog
 from fastapi import APIRouter, Depends, Query, Request, UploadFile
 
@@ -14,8 +12,8 @@ from app.models.knowledge_graph import (
     DocumentListResponse,
     IngestRequest,
     IngestResponse,
+    QueryRequest,
     QueryResponse,
-    RetrievalMode,
     SourceIngestRequest,
     SubgraphResponse,
 )
@@ -119,24 +117,19 @@ async def ingest_upload(
     return SourceIngestAcceptedResponse(task_id=result.id)
 
 
-@router.get("/query", response_model=QueryResponse)
+@router.post("/query", response_model=QueryResponse)
 @limiter.limit(settings.rate_limit_query)
 async def query_knowledge_graph(
     request: Request,
-    query: str = Query(..., min_length=1, description="Natural language query"),
-    include_text: bool = Query(default=True),
-    response_mode: Literal[
-        "tree_summarize", "compact", "refine", "simple_summarize", "no_text", "accumulate"
-    ] = Query(default="tree_summarize"),
-    retrieval_mode: RetrievalMode = Query(default=RetrievalMode.DUAL),
+    body: QueryRequest,
     service: KnowledgeGraphService = Depends(get_kg_service),
 ) -> QueryResponse:
     """Query the knowledge graph with a natural language question."""
     response_text, source_nodes = await service.query(
-        query_text=query,
-        include_text=include_text,
-        response_mode=response_mode,
-        retrieval_mode=retrieval_mode,
+        query_text=body.query,
+        include_text=body.include_text,
+        response_mode=body.response_mode,
+        retrieval_mode=body.retrieval_mode,
     )
     return QueryResponse(response=response_text, source_nodes=source_nodes)
 

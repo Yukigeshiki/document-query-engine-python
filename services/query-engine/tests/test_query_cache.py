@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.models.knowledge_graph import SourceNodeInfo
+from app.models.knowledge_graph import SourceNodeInfo, SourceNodeMetadata
 from app.services.query_cache import QueryCache
 
 
@@ -85,7 +85,7 @@ class TestQueryCache:
         response_text, source_nodes, returned_embedding = result
         assert response_text == "Alice works at Acme."
         assert len(source_nodes) == 1
-        assert source_nodes[0].text == "source"
+        assert source_nodes[0].score == 0.9
         assert returned_embedding is embedding
 
     def test_cache_miss_below_threshold(
@@ -110,7 +110,7 @@ class TestQueryCache:
         """Verify set stores embedding in PG and payload in Redis."""
         mock_embed.return_value = [0.1] * 1536
 
-        source_nodes = [SourceNodeInfo(text="source", score=0.9, metadata={})]
+        source_nodes = [SourceNodeInfo(score=0.9, metadata=SourceNodeMetadata())]
         cache.set("test query", True, "tree_summarize", "dual", "response", source_nodes)
 
         cursor = mock_pg_conn.cursor.return_value.__enter__.return_value
@@ -127,7 +127,7 @@ class TestQueryCache:
     ) -> None:
         """Verify set skips embedding API call when embedding is provided."""
         pre_computed = [0.2] * 1536
-        source_nodes = [SourceNodeInfo(text="source", score=0.9, metadata={})]
+        source_nodes = [SourceNodeInfo(score=0.9, metadata=SourceNodeMetadata())]
         cache.set(
             "test query", True, "tree_summarize", "dual",
             "response", source_nodes, embedding=pre_computed,

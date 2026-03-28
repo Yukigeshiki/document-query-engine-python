@@ -8,7 +8,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.dependencies import get_kg_service
 from app.main import create_app
-from app.models.knowledge_graph import DocumentInfo, SourceNodeInfo, SubgraphEdge, SubgraphNode
+from app.models.knowledge_graph import DocumentInfo, SourceNodeInfo, SourceNodeMetadata, SubgraphEdge, SubgraphNode
 
 
 @pytest.fixture
@@ -18,7 +18,7 @@ def mock_kg_service() -> AsyncMock:
     service.ingest.return_value = ("test-doc-id", 5)
     service.query.return_value = (
         "Test response about the topic.",
-        [SourceNodeInfo(text="source text", score=0.9, metadata={"source": "test"})],
+        [SourceNodeInfo(source_type="vector", score=0.9, metadata=SourceNodeMetadata(file_name="test.txt"))],
     )
     service.get_subgraph.return_value = (
         [SubgraphNode(id="Alice"), SubgraphNode(id="Acme Corp", label="Organization")],
@@ -96,16 +96,16 @@ async def test_query_knowledge_graph(
     kg_client: AsyncClient, mock_kg_service: AsyncMock
 ) -> None:
     """Verify query endpoint returns response and source nodes."""
-    response = await kg_client.get(
+    response = await kg_client.post(
         "/api/v1/kg/query",
-        params={"query": "Where does Alice work?"},
+        json={"query": "Where does Alice work?"},
     )
     assert response.status_code == 200
     data = response.json()
     assert data["response"] == "Test response about the topic."
     assert len(data["sourceNodes"]) == 1
-    assert data["sourceNodes"][0]["text"] == "source text"
     assert data["sourceNodes"][0]["score"] == 0.9
+    assert data["sourceNodes"][0]["sourceType"] == "vector"
     mock_kg_service.query.assert_called_once()
 
 
@@ -114,9 +114,9 @@ async def test_query_with_retrieval_mode(
     kg_client: AsyncClient, mock_kg_service: AsyncMock
 ) -> None:
     """Verify retrieval_mode parameter is passed through."""
-    response = await kg_client.get(
+    response = await kg_client.post(
         "/api/v1/kg/query",
-        params={"query": "test", "retrieval_mode": "vector_only"},
+        json={"query": "test", "retrievalMode": "vector_only"},
     )
     assert response.status_code == 200
     mock_kg_service.query.assert_called_once()
@@ -203,9 +203,9 @@ async def test_ingest_empty_text(kg_client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_query_empty_query(kg_client: AsyncClient) -> None:
     """Verify validation rejects empty query."""
-    response = await kg_client.get(
+    response = await kg_client.post(
         "/api/v1/kg/query",
-        params={"query": ""},
+        json={"query": ""},
     )
     assert response.status_code == 422
 

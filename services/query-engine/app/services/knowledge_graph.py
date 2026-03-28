@@ -45,7 +45,15 @@ from app.core.metrics import (
     kg_subgraph_total,
     kg_vector_store_up,
 )
-from app.models.knowledge_graph import RetrievalMode, SourceNodeInfo, SubgraphEdge, SubgraphNode
+from app.models.knowledge_graph import (
+    ResponseMode,
+    RetrievalMode,
+    SourceNodeInfo,
+    SourceNodeMetadata,
+    SourceRetrievalType,
+    SubgraphEdge,
+    SubgraphNode,
+)
 from app.services.dual_retriever import DualRetriever
 from app.services.query_cache import QueryCache
 
@@ -423,8 +431,8 @@ class KnowledgeGraphService:
         self,
         query_text: str,
         include_text: bool = True,
-        response_mode: str = "tree_summarize",
-        retrieval_mode: str = "dual",
+        response_mode: ResponseMode = ResponseMode.TREE_SUMMARIZE,
+        retrieval_mode: RetrievalMode = RetrievalMode.DUAL,
     ) -> tuple[str, list[SourceNodeInfo]]:
         """
         Query using KG, vector, or dual retrieval.
@@ -480,9 +488,13 @@ class KnowledgeGraphService:
 
                 source_nodes = [
                     SourceNodeInfo(
-                        text=node.node.get_content(),
+                        source_type=node.node.metadata.get(
+                            "_source_type", SourceRetrievalType.VECTOR
+                        ),
                         score=node.score,
-                        metadata=node.node.metadata,
+                        metadata=SourceNodeMetadata(
+                            file_name=node.node.metadata.get("file_name"),
+                        ),
                     )
                     for node in response.source_nodes
                 ]
