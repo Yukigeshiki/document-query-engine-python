@@ -3,6 +3,8 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from app.models.knowledge_graph import SourceType
 from httpx import AsyncClient
 
 
@@ -56,7 +58,7 @@ async def test_get_task_status_success(
     instance.successful.return_value = True
     instance.failed.return_value = False
     instance.result = {
-        "source_type": "filesystem",
+        "source_type": SourceType.GCS,
         "total_documents": 5,
         "total_triplets": 20,
         "errors": [],

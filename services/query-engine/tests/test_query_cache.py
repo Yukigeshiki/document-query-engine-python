@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.models.knowledge_graph import SourceNodeInfo, SourceNodeMetadata
+from app.models.knowledge_graph import ResponseMode, RetrievalMode, SourceNodeInfo, SourceNodeMetadata
 from app.services.query_cache import QueryCache
 
 
@@ -59,7 +59,7 @@ class TestQueryCache:
         cursor.fetchone.return_value = None
 
         embedding = [0.1] * 1536
-        result = cache.get("test query", True, "tree_summarize", "dual", embedding=embedding)
+        result = cache.get("test query", True, ResponseMode.TREE_SUMMARIZE, RetrievalMode.DUAL, embedding=embedding)
         assert result is None
 
     def test_cache_hit_returns_result(
@@ -79,7 +79,7 @@ class TestQueryCache:
         mock_redis.get.return_value = payload.encode()
 
         embedding = [0.1] * 1536
-        result = cache.get("test query", True, "tree_summarize", "dual", embedding=embedding)
+        result = cache.get("test query", True, ResponseMode.TREE_SUMMARIZE, RetrievalMode.DUAL, embedding=embedding)
 
         assert result is not None
         response_text, source_nodes, returned_embedding = result
@@ -96,7 +96,7 @@ class TestQueryCache:
         cursor.fetchone.return_value = ("abc123", 0.90)
 
         embedding = [0.1] * 1536
-        result = cache.get("test query", True, "tree_summarize", "dual", embedding=embedding)
+        result = cache.get("test query", True, ResponseMode.TREE_SUMMARIZE, RetrievalMode.DUAL, embedding=embedding)
         assert result is None
 
     @patch("app.services.query_cache.QueryCache.embed_query")
@@ -111,7 +111,7 @@ class TestQueryCache:
         mock_embed.return_value = [0.1] * 1536
 
         source_nodes = [SourceNodeInfo(score=0.9, metadata=SourceNodeMetadata())]
-        cache.set("test query", True, "tree_summarize", "dual", "response", source_nodes)
+        cache.set("test query", True, ResponseMode.TREE_SUMMARIZE, RetrievalMode.DUAL, "response", source_nodes)
 
         cursor = mock_pg_conn.cursor.return_value.__enter__.return_value
         cursor.execute.assert_called()
@@ -129,7 +129,7 @@ class TestQueryCache:
         pre_computed = [0.2] * 1536
         source_nodes = [SourceNodeInfo(score=0.9, metadata=SourceNodeMetadata())]
         cache.set(
-            "test query", True, "tree_summarize", "dual",
+            "test query", True, ResponseMode.TREE_SUMMARIZE, RetrievalMode.DUAL,
             "response", source_nodes, embedding=pre_computed,
         )
 
@@ -152,7 +152,7 @@ class TestQueryCache:
     def test_cache_graceful_on_failure(self, cache: QueryCache) -> None:
         """Verify None returned when embedding fails."""
         result = cache.get(
-            "test query", True, "tree_summarize", "dual",
+            "test query", True, ResponseMode.TREE_SUMMARIZE, RetrievalMode.DUAL,
             embedding=None,  # will try to call embed_query which uses real Settings
         )
         # Should gracefully return None (Settings.embed_model not configured in tests)
@@ -160,10 +160,10 @@ class TestQueryCache:
 
     def test_cache_key_varies_by_params(self) -> None:
         """Verify different params produce different cache keys."""
-        key1 = QueryCache._make_cache_key("query", True, "tree_summarize", "dual")
-        key2 = QueryCache._make_cache_key("query", False, "tree_summarize", "dual")
-        key3 = QueryCache._make_cache_key("query", True, "compact", "dual")
-        key4 = QueryCache._make_cache_key("different", True, "tree_summarize", "dual")
+        key1 = QueryCache._make_cache_key("query", True, ResponseMode.TREE_SUMMARIZE, RetrievalMode.DUAL)
+        key2 = QueryCache._make_cache_key("query", False, ResponseMode.TREE_SUMMARIZE, RetrievalMode.DUAL)
+        key3 = QueryCache._make_cache_key("query", True, ResponseMode.COMPACT, RetrievalMode.DUAL)
+        key4 = QueryCache._make_cache_key("different", True, ResponseMode.TREE_SUMMARIZE, RetrievalMode.DUAL)
 
         assert len({key1, key2, key3, key4}) == 4
 

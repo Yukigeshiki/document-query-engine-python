@@ -19,10 +19,10 @@ logger = structlog.stdlib.get_logger(__name__)
 class GCSConnector(BaseConnector):
     """Load documents from a Google Cloud Storage bucket."""
 
-    def __init__(self, gcs_bucket: str = "", gcs_credentials_path: str = "") -> None:
-        """Initialize with optional default bucket and credentials."""
+    def __init__(self, gcs_bucket: str, gcs_client: gcs_storage.Client) -> None:
+        """Initialize with bucket name and shared GCS client."""
         self._gcs_bucket = gcs_bucket
-        self._gcs_credentials_path = gcs_credentials_path
+        self._gcs_client = gcs_client
 
     def load_documents(self, config: dict[str, Any]) -> Iterator[Document]:
         """
@@ -44,14 +44,7 @@ class GCSConnector(BaseConnector):
         prefix = str(config.get("prefix", ""))
 
         try:
-            if self._gcs_credentials_path:
-                client = gcs_storage.Client.from_service_account_json(
-                    self._gcs_credentials_path
-                )
-            else:
-                client = gcs_storage.Client()
-
-            bucket = client.bucket(bucket_name)
+            bucket = self._gcs_client.bucket(bucket_name)
             blobs = list(bucket.list_blobs(prefix=prefix))
 
             if not blobs:

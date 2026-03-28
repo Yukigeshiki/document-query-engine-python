@@ -16,7 +16,7 @@ from psycopg2.extensions import connection as pg_connection  # type: ignore[impo
 
 from app.core.config import Settings as AppSettings
 from app.core.metrics import kg_cache_invalidations_total, kg_cache_similarity_score
-from app.models.knowledge_graph import SourceNodeInfo
+from app.models.knowledge_graph import ResponseMode, RetrievalMode, SourceNodeInfo
 
 logger = structlog.stdlib.get_logger(__name__)
 
@@ -53,12 +53,25 @@ class QueryCache:
 
     @contextmanager
     def _pg_conn(self) -> Generator[pg_connection, None, None]:
-        """Get a pooled PG connection, guaranteed to be returned on exit."""
+        """
+        Get a pooled PG connection, replacing stale connections automatically.
+
+        psycopg2 marks connections as closed when the server drops them
+        (e.g. after a PostgreSQL restart). We check before yielding, so
+        callers never see a dead connection and discard any that break
+        mid-use so the pool replaces them on the next call.
+        """
         conn = self._pool.getconn()
+        if conn.closed:
+            self._pool.putconn(conn, close=True)
+            conn = self._pool.getconn()
         try:
             yield conn
         finally:
-            self._pool.putconn(conn)
+            if conn.closed:
+                self._pool.putconn(conn, close=True)
+            else:
+                self._pool.putconn(conn)
 
     def _ensure_table(self) -> None:
         """Create the cache embeddings table and index if they don't exist."""
@@ -112,8 +125,8 @@ class QueryCache:
     def _make_cache_key(
         query_text: str,
         include_text: bool,
-        response_mode: str,
-        retrieval_mode: str,
+        response_mode: ResponseMode,
+        retrieval_mode: RetrievalMode,
     ) -> str:
         """Generate a deterministic cache key from query parameters."""
         raw = f"{query_text}:{include_text}:{response_mode}:{retrieval_mode}"
@@ -133,8 +146,8 @@ class QueryCache:
         self,
         query_text: str,
         include_text: bool,
-        response_mode: str,
-        retrieval_mode: str,
+        response_mode: ResponseMode,
+        retrieval_mode: RetrievalMode,
         embedding: list[float] | None = None,
     ) -> tuple[str, list[SourceNodeInfo], list[float]] | None:
         """
@@ -210,8 +223,8 @@ class QueryCache:
         self,
         query_text: str,
         include_text: bool,
-        response_mode: str,
-        retrieval_mode: str,
+        response_mode: ResponseMode,
+        retrieval_mode: RetrievalMode,
         response_text: str,
         source_nodes: list[SourceNodeInfo],
         embedding: list[float] | None = None,

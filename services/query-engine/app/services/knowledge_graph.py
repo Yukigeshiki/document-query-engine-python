@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import structlog
+from sqlalchemy import create_engine
 from llama_index.core import (
     Document,
     KnowledgeGraphIndex,
@@ -27,6 +28,7 @@ from llama_index.graph_stores.neo4j import Neo4jGraphStore
 from llama_index.llms.openai import OpenAI
 from llama_index.storage.docstore.postgres import PostgresDocumentStore
 from llama_index.storage.index_store.postgres import PostgresIndexStore
+from llama_index.storage.kvstore.postgres.base import PostgresKVStore
 from llama_index.vector_stores.postgres import PGVectorStore
 
 from app.core.config import Settings as AppSettings
@@ -132,6 +134,11 @@ class KnowledgeGraphService:
 
         try:
             parsed = urlparse(config.postgres_uri)
+            # pool_pre_ping tests each connection before use and silently
+            # replaces dead ones, so a PostgreSQL restart doesn't require
+            # restarting the API server or worker.
+            engine_kwargs = {"pool_pre_ping": True}
+
             vector_store = PGVectorStore.from_params(
                 host=parsed.hostname or "localhost",
                 port=str(parsed.port or 5432),
@@ -141,9 +148,19 @@ class KnowledgeGraphService:
                 embed_dim=config.embed_dim,
                 hybrid_search=True,
                 text_search_config="english",
+                create_engine_kwargs=engine_kwargs,
             )
-            docstore = PostgresDocumentStore.from_uri(config.postgres_uri)
-            index_store = PostgresIndexStore.from_uri(config.postgres_uri)
+
+            # Share a single engine with pool_pre_ping for docstore and index store
+            pg_engine = create_engine(config.postgres_uri, **engine_kwargs)
+            doc_kvstore = PostgresKVStore(
+                table_name="docstore", engine=pg_engine, perform_setup=True,
+            )
+            index_kvstore = PostgresKVStore(
+                table_name="indexstore", engine=pg_engine, perform_setup=True,
+            )
+            docstore = PostgresDocumentStore(postgres_kvstore=doc_kvstore)
+            index_store = PostgresIndexStore(postgres_kvstore=index_kvstore)
 
             logger.info("postgres_connected", uri=parsed.hostname)
             return StorageContext.from_defaults(

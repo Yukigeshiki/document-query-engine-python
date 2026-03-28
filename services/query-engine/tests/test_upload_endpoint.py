@@ -16,7 +16,7 @@ from app.models.knowledge_graph import SourceType
 def mock_upload_service() -> AsyncMock:
     """Create a mock UploadService."""
     service = AsyncMock()
-    service.save.return_value = (SourceType.FILESYSTEM, {"path": "/tmp/uploads/abc"})
+    service.save.return_value = (SourceType.GCS, {"bucket": "test-bucket", "prefix": "uploads/abc/"})
     return service
 
 
@@ -54,8 +54,8 @@ async def test_upload_txt_file(
     assert data["taskId"] == "upload-task-123"
     mock_upload_service.save.assert_called_once()
     mock_task.delay.assert_called_once_with(
-        source_type="filesystem",
-        config={"path": "/tmp/uploads/abc"},
+        source_type=SourceType.GCS,
+        config={"bucket": "test-bucket", "prefix": "uploads/abc/"},
     )
 
 

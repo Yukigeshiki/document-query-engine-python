@@ -11,7 +11,6 @@ from app.models import CamelModel
 class SourceType(StrEnum):
     """Supported document source connector types."""
 
-    FILESYSTEM = "filesystem"
     GCS = "gcs"
 
 

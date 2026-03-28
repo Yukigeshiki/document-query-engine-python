@@ -14,6 +14,7 @@ from app.api.v1.router import api_router
 from app.connectors.setup import register_default_connectors
 from app.core.config import settings
 from app.core.error_handlers import register_error_handlers
+from app.core.gcs import get_gcs_client
 from app.core.logging import setup_logging
 from app.core.middleware import RequestContextMiddleware
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
@@ -46,9 +47,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     _app.state.kg_service = KnowledgeGraphService(
         settings, cache=create_query_cache(settings)
     )
-    if settings.upload_storage:
-        _app.state.upload_service = UploadService(settings)
-    register_default_connectors(settings)
+    if settings.gcs_bucket:
+        gcs_client = get_gcs_client(settings)
+        _app.state.upload_service = UploadService(
+            gcs_bucket=settings.gcs_bucket, gcs_client=gcs_client
+        )
+        register_default_connectors(settings, gcs_client=gcs_client)
+    else:
+        logger.warning("gcs_not_configured", msg="Upload and GCS ingestion disabled")
     poller_task = asyncio.create_task(_health_poller(_app.state.kg_service))
     yield
     poller_task.cancel()

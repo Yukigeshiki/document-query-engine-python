@@ -45,15 +45,9 @@ class Settings(BaseSettings):
     embed_dim: int = 1536
     vector_top_k: int = 10
 
-    # Data directory (shared between API and worker)
-    data_dir: str = ""
-
-    # Document connectors
+    # GCS
     gcs_bucket: str = ""
-    gcs_credentials_path: str = ""
-
-    # Uploads
-    upload_storage: str = ""
+    gcs_credentials_json: str = ""
 
     # Cache
     cache_ttl_seconds: int = 86400  # 24 hours

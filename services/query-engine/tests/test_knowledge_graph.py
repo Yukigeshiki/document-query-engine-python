@@ -8,7 +8,15 @@ from httpx import ASGITransport, AsyncClient
 
 from app.dependencies import get_kg_service
 from app.main import create_app
-from app.models.knowledge_graph import DocumentInfo, SourceNodeInfo, SourceNodeMetadata, SubgraphEdge, SubgraphNode
+from app.models.knowledge_graph import (
+    DocumentInfo,
+    RetrievalMode,
+    SourceNodeInfo,
+    SourceNodeMetadata,
+    SourceRetrievalType,
+    SubgraphEdge,
+    SubgraphNode,
+)
 
 
 @pytest.fixture
@@ -18,7 +26,7 @@ def mock_kg_service() -> AsyncMock:
     service.ingest.return_value = ("test-doc-id", 5)
     service.query.return_value = (
         "Test response about the topic.",
-        [SourceNodeInfo(source_type="vector", score=0.9, metadata=SourceNodeMetadata(file_name="test.txt"))],
+        [SourceNodeInfo(source_type=SourceRetrievalType.VECTOR, score=0.9, metadata=SourceNodeMetadata(file_name="test.txt"))],
     )
     service.get_subgraph.return_value = (
         [SubgraphNode(id="Alice"), SubgraphNode(id="Acme Corp", label="Organization")],
@@ -105,7 +113,7 @@ async def test_query_knowledge_graph(
     assert data["response"] == "Test response about the topic."
     assert len(data["sourceNodes"]) == 1
     assert data["sourceNodes"][0]["score"] == 0.9
-    assert data["sourceNodes"][0]["sourceType"] == "vector"
+    assert data["sourceNodes"][0]["sourceType"] == SourceRetrievalType.VECTOR
     mock_kg_service.query.assert_called_once()
 
 
@@ -116,12 +124,12 @@ async def test_query_with_retrieval_mode(
     """Verify retrieval_mode parameter is passed through."""
     response = await kg_client.post(
         "/api/v1/kg/query",
-        json={"query": "test", "retrievalMode": "vector_only"},
+        json={"query": "test", "retrievalMode": RetrievalMode.VECTOR_ONLY},
     )
     assert response.status_code == 200
     mock_kg_service.query.assert_called_once()
     call_kwargs = mock_kg_service.query.call_args
-    assert str(call_kwargs.kwargs["retrieval_mode"]) == "vector_only"
+    assert call_kwargs.kwargs["retrieval_mode"] == RetrievalMode.VECTOR_ONLY
 
 
 @pytest.mark.asyncio

@@ -8,6 +8,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.dependencies import get_kg_service
 from app.main import create_app
+from app.models.knowledge_graph import SourceType
 
 
 @pytest.fixture
@@ -42,14 +43,14 @@ async def test_ingest_from_source_returns_task_id(
 
     response = await source_client.post(
         "/api/v1/kg/ingest/source",
-        json={"sourceType": "filesystem", "config": {"path": "/data"}},
+        json={"sourceType": SourceType.GCS, "config": {"bucket": "test", "prefix": "docs/"}},
     )
     assert response.status_code == 202
     data = response.json()
     assert data["taskId"] == "abc-123"
     mock_task.delay.assert_called_once_with(
-        source_type="filesystem",
-        config={"path": "/data"},
+        source_type=SourceType.GCS,
+        config={"bucket": "test", "prefix": "docs/"},
     )
 
 

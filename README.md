@@ -1,4 +1,4 @@
-# Query Engine
+# Agent Query Engine
 
 A document ingestion and query engine. Upload documents (PDF, DOCX, TXT), extract knowledge graph triplets and vector embeddings, then query across both using natural language.
 

@@ -42,7 +42,7 @@ async def test_pipeline_ingests_all_documents(
 
     pipeline = IngestionPipeline(kg_service=mock_kg_service)
     total_docs, total_triplets, errors = await pipeline.run(
-        SourceType.FILESYSTEM, {"path": "/data"}
+        SourceType.GCS, {"bucket": "test", "prefix": "docs/"}
     )
 
     assert total_docs == 3
@@ -68,7 +68,7 @@ async def test_pipeline_handles_partial_failures(
 
     pipeline = IngestionPipeline(kg_service=mock_kg_service)
     total_docs, total_triplets, errors = await pipeline.run(
-        SourceType.FILESYSTEM, {"path": "/data"}
+        SourceType.GCS, {"bucket": "test", "prefix": "docs/"}
     )
 
     assert total_docs == 2
@@ -90,7 +90,7 @@ async def test_pipeline_empty_source(
 
     pipeline = IngestionPipeline(kg_service=mock_kg_service)
     total_docs, total_triplets, errors = await pipeline.run(
-        SourceType.FILESYSTEM, {"path": "/empty"}
+        SourceType.GCS, {"bucket": "test", "prefix": "empty/"}
     )
 
     assert total_docs == 0
@@ -110,4 +110,4 @@ async def test_pipeline_unknown_source_type(
 
     pipeline = IngestionPipeline(kg_service=mock_kg_service)
     with pytest.raises(BadRequestError, match="Unknown source type"):
-        await pipeline.run(SourceType.FILESYSTEM, {})
+        await pipeline.run(SourceType.GCS, {})
