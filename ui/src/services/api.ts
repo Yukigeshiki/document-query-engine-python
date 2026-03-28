@@ -10,7 +10,7 @@ import axios from 'axios'
 
 const API_TIMEOUT = 30000
 
-const API_URL = import.meta.env.VITE_QUERY_ENGINE_URL || 'http://localhost:8000'
+const API_URL = import.meta.env.VITE_QUERY_ENGINE_URL || ''
 
 /**
  * Recursively transforms undefined values to null in an object.

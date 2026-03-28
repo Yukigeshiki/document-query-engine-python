@@ -1,0 +1,16 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: query-engine-ingress
+  namespace: query-engine
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`{{ .Values.domain }}`)
+      kind: Rule
+      services:
+        - name: query-engine-ui
+          port: 80
+  tls:
+    secretName: query-engine-tls

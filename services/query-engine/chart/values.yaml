@@ -1,0 +1,39 @@
+image:
+  repository: query-engine-api
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+api:
+  replicaCount: 1
+  port: 8000
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "384Mi"
+    limits:
+      cpu: "1"
+      memory: "512Mi"
+
+worker:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "384Mi"
+    limits:
+      cpu: "1"
+      memory: "512Mi"
+
+beat:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+
+config:
+  configMapName: "query-engine-config"
+  secretName: "query-engine-secrets"

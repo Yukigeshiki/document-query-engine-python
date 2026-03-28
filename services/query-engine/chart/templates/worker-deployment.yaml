@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: query-engine-worker
+  labels:
+    app: query-engine-worker
+    chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      app: query-engine-worker
+  template:
+    metadata:
+      labels:
+        app: query-engine-worker
+    spec:
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "--loglevel=info", "--concurrency=1"]
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.config.configMapName }}
+            - secretRef:
+                name: {{ .Values.config.secretName }}
+          resources:
+            requests:
+              cpu: {{ .Values.worker.resources.requests.cpu }}
+              memory: {{ .Values.worker.resources.requests.memory }}
+            limits:
+              cpu: {{ .Values.worker.resources.limits.cpu }}
+              memory: {{ .Values.worker.resources.limits.memory }}

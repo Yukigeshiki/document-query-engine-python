@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: query-engine-beat
+  labels:
+    app: query-engine-beat
+    chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+spec:
+  replicas: {{ .Values.beat.replicaCount }}
+  selector:
+    matchLabels:
+      app: query-engine-beat
+  template:
+    metadata:
+      labels:
+        app: query-engine-beat
+    spec:
+      containers:
+        - name: beat
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["celery", "-A", "app.worker.celery_app:celery_app", "beat", "--loglevel=info"]
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.config.configMapName }}
+            - secretRef:
+                name: {{ .Values.config.secretName }}
+          resources:
+            requests:
+              cpu: {{ .Values.beat.resources.requests.cpu }}
+              memory: {{ .Values.beat.resources.requests.memory }}
+            limits:
+              cpu: {{ .Values.beat.resources.limits.cpu }}
+              memory: {{ .Values.beat.resources.limits.memory }}

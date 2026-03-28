@@ -1,0 +1,7 @@
+image: pgvector/pgvector:pg16
+storage: 10Gi
+
+auth:
+  user: postgres
+  password: ""
+  database: query_engine

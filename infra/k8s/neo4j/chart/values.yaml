@@ -1,0 +1,7 @@
+image: neo4j:5.26
+storage: 10Gi
+
+auth:
+  username: neo4j
+  password: ""
+  database: neo4j
