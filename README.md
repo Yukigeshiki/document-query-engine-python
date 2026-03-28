@@ -43,6 +43,8 @@ docker compose up -d
 
 Starts Neo4j, PostgreSQL (with pgvector), Redis, the Celery worker, and the Celery beat scheduler.
 
+For Kubernetes deployment, see [infra/README.md](infra/README.md).
+
 ### Backend
 
 ```bash
@@ -92,7 +94,9 @@ The UI provides a query page for asking questions about your documents and an up
 ```
 services/query-engine/   Python, FastAPI, LlamaIndex, Celery, Poetry
 ui/                      Vue 3, TypeScript, Vite, Tailwind CSS, Cytoscape.js
-docker-compose.yml       Neo4j, PostgreSQL, Redis, Celery worker + beat
+infra/                   Helm charts, deploy scripts, K8s manifests
+docker-compose.yml       Neo4j, PostgreSQL, Redis, Celery worker + beat (local dev)
+.github/workflows/       CI: API tests, API build, UI build
 ```
 
 ## API
@@ -124,7 +128,7 @@ curl -X POST http://localhost:8000/api/v1/kg/ingest/upload \
 | GET | `/kg/documents/graph` | Get knowledge graph for a document |
 | GET | `/kg/subgraph` | Get subgraph around an entity |
 | GET | `/tasks/{taskId}` | Poll background task status |
-| GET | `/health` | Health check |
+| GET | `/api/v1/health` | Health check |
 | GET | `/metrics` | Prometheus metrics |
 
 ## Build Commands
