@@ -1,0 +1,17 @@
+name: API Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/query-engine/**'
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker build
+        run: docker build -t query-engine-api:${{ github.sha }} services/query-engine

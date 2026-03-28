@@ -15,7 +15,7 @@ router = APIRouter(tags=["health"])
 async def health_check(
     kg_service: KnowledgeGraphService | None = Depends(get_optional_kg_service),
 ) -> JSONResponse:
-    """Return application health status, version, and component health."""
+    """Return application health status, version, and component health. """
     components: dict[str, ComponentHealth] = {}
 
     if kg_service is not None:

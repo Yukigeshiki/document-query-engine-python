@@ -1,5 +1,9 @@
 # Agent Query Engine
 
+[![API Tests](https://github.com/Yukigeshiki/agent-query-engine-python/actions/workflows/api-tests.yml/badge.svg)](https://github.com/Yukigeshiki/agent-query-engine-python/actions/workflows/api-tests.yml)
+[![API Build](https://github.com/Yukigeshiki/agent-query-engine-python/actions/workflows/api-build.yml/badge.svg)](https://github.com/Yukigeshiki/agent-query-engine-python/actions/workflows/api-build.yml)
+[![UI Build](https://github.com/Yukigeshiki/agent-query-engine-python/actions/workflows/ui-build.yml/badge.svg)](https://github.com/Yukigeshiki/agent-query-engine-python/actions/workflows/ui-build.yml)
+
 A document ingestion and query engine built with Python and FastAPI. Upload documents (PDF, DOCX, TXT), extract knowledge graph triplets and vector embeddings, then query across both using natural language. Documents are stored in GCS, processed asynchronously via Celery, and indexed into Neo4j (knowledge graph) and pgvector (vector embeddings). The UI provides document upload with interactive graph visualization and a query interface with retrieval mode selection.
 
 ## How It Works

@@ -1,0 +1,17 @@
+name: UI Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ui/**'
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker build
+        run: docker build -t query-engine-ui:${{ github.sha }} ui
