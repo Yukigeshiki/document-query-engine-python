@@ -55,3 +55,23 @@ def register_error_handlers(app: FastAPI) -> None:
             status_code=422, content=body.model_dump(by_alias=True)
         )
 
+    @app.exception_handler(Exception)
+    async def handle_unhandled_exception(
+        request: Request, exc: Exception
+    ) -> JSONResponse:
+        """Catch-all for unhandled exceptions. Logs the full error but returns a safe response."""
+        logger.error(
+            "unhandled_exception",
+            error=str(exc),
+            exc_type=type(exc).__name__,
+            path=request.url.path,
+        )
+        body = ErrorResponse(
+            error="internal_error",
+            code="internal_error",
+        )
+        return JSONResponse(
+            status_code=500,
+            content=body.model_dump(by_alias=True, exclude_none=True),
+        )
+
