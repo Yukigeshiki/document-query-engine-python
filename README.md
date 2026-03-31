@@ -4,7 +4,7 @@
 [![API Build](https://github.com/Yukigeshiki/agent-query-engine-python/actions/workflows/api-build.yml/badge.svg)](https://github.com/Yukigeshiki/agent-query-engine-python/actions/workflows/api-build.yml)
 [![UI Build](https://github.com/Yukigeshiki/agent-query-engine-python/actions/workflows/ui-build.yml/badge.svg)](https://github.com/Yukigeshiki/agent-query-engine-python/actions/workflows/ui-build.yml)
 
-A document ingestion and query engine built with Python and FastAPI. Upload documents (PDF, DOCX, TXT), extract knowledge graph triplets and vector embeddings, then query across both using natural language. Documents are stored in GCS, processed asynchronously via Celery, and indexed into Neo4j (knowledge graph) and pgvector (vector embeddings). The UI provides document upload with interactive graph visualization and a query interface with retrieval mode selection.
+A document ingestion and query engine built with Python, FastAPI, and LlamaIndex. Upload documents (PDF, DOCX, TXT), extract knowledge graph triplets and vector embeddings, then query across both using natural language. LlamaIndex orchestrates the full pipeline — chunking documents, extracting entity-relationship triplets via OpenAI into Neo4j, embedding chunks into pgvector, and synthesizing answers from dual retrieval (graph traversal + vector similarity). Documents are stored in GCS and processed asynchronously via Celery. The UI provides document upload with interactive graph visualization and a query interface with retrieval mode selection.
 
 ## How It Works
 

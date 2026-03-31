@@ -15,6 +15,16 @@ spec:
       labels:
         app: query-engine-api
     spec:
+      initContainers:
+        - name: wait-for-neo4j
+          image: busybox:1.37
+          command: ['sh', '-c', 'until nc -z neo4j.query-engine.svc.cluster.local 7687; do echo "Waiting for Neo4j..."; sleep 2; done']
+        - name: wait-for-postgres
+          image: busybox:1.37
+          command: ['sh', '-c', 'until nc -z postgres.query-engine.svc.cluster.local 5432; do echo "Waiting for PostgreSQL..."; sleep 2; done']
+        - name: wait-for-redis
+          image: busybox:1.37
+          command: ['sh', '-c', 'until nc -z redis.query-engine.svc.cluster.local 6379; do echo "Waiting for Redis..."; sleep 2; done']
       containers:
         - name: api
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
