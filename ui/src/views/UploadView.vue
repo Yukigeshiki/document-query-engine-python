@@ -171,6 +171,16 @@ async function searchSubgraph() {
 }
 
 async function onSelectDocument(doc: DocumentInfo) {
+  // Toggle: clicking the same document again closes the graph
+  if (selectedDocId.value === doc.docId) {
+    selectedDocId.value = null
+    selectedDocIds.value = []
+    graphNodes.value = []
+    graphEdges.value = []
+    graphError.value = null
+    return
+  }
+
   selectedDocId.value = doc.docId
   selectedDocIds.value = doc.docIds
   isLoadingGraph.value = true
