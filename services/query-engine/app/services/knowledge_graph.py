@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import time
 import uuid
+from datetime import UTC, datetime
 from functools import partial
 from typing import Any
 from urllib.parse import urlparse
@@ -416,8 +417,12 @@ class KnowledgeGraphService:
                 grouped[group_key]["node_count"] += len(info.node_ids)
                 grouped[group_key]["doc_ids"].append(doc_id)
 
-            # Newest first (reverse insertion order)
-            all_docs = list(reversed(grouped.values()))
+            # Newest first by ingested_at timestamp
+            all_docs = sorted(
+                grouped.values(),
+                key=lambda d: d["metadata"].get("ingested_at", ""),
+                reverse=True,
+            )
             total = len(all_docs)
             return all_docs[offset : offset + limit], total
 
@@ -640,6 +645,7 @@ class KnowledgeGraphService:
         # but exclude everything from LLM triplet extraction so it doesn't
         # pollute the knowledge graph.
         doc_metadata = metadata or {}
+        doc_metadata["ingested_at"] = datetime.now(tz=UTC).isoformat()
         doc = Document(
             text=text,
             doc_id=doc_id,

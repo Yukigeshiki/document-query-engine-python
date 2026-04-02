@@ -2,42 +2,43 @@
   <div v-if="documents.length > 0" class="space-y-2">
     <h2 class="text-lg font-semibold">Uploaded Documents</h2>
     <div class="space-y-1">
-      <button
-        v-for="doc in documents"
-        :key="doc.docId"
-        @click="$emit('select-document', doc)"
-        :disabled="deletingId === doc.docId"
-        :class="[
-          'group relative w-full flex items-center justify-between px-4 py-3 rounded-md border text-left transition-colors',
-          deletingId === doc.docId
-            ? 'opacity-50 cursor-not-allowed'
-            : 'cursor-pointer',
-          selectedId === doc.docId
-            ? 'border-primary bg-accent'
-            : 'border-border hover:bg-accent/50',
-        ]"
-      >
-        <span class="flex items-center gap-3 min-w-0">
-          <Loader2 v-if="deletingId === doc.docId" class="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
-          <FileText v-else class="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span class="min-w-0">
-            <span class="block text-sm font-medium truncate">
-              {{ deletingId === doc.docId ? `Deleting ${doc.fileName || doc.docId}...` : (doc.fileName || doc.docId) }}
-            </span>
-            <span class="block text-xs text-muted-foreground">
-              {{ doc.nodeCount }} node(s)
+      <template v-for="doc in documents" :key="doc.docId">
+        <slot v-if="selectedId === doc.docId" name="above-selected" />
+        <button
+          @click="$emit('select-document', doc)"
+          :disabled="deletingId === doc.docId"
+          :class="[
+            'group relative w-full flex items-center justify-between px-4 py-3 rounded-md border text-left transition-colors',
+            deletingId === doc.docId
+              ? 'opacity-50 cursor-not-allowed'
+              : 'cursor-pointer',
+            selectedId === doc.docId
+              ? 'border-primary bg-accent'
+              : 'border-border hover:bg-accent/50',
+          ]"
+        >
+          <span class="flex items-center gap-3 min-w-0">
+            <Loader2 v-if="deletingId === doc.docId" class="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+            <FileText v-else class="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span class="min-w-0">
+              <span class="block text-sm font-medium truncate">
+                {{ deletingId === doc.docId ? `Deleting ${doc.fileName || doc.docId}...` : (doc.fileName || doc.docId) }}
+              </span>
+              <span class="block text-xs text-muted-foreground">
+                {{ doc.nodeCount }} node(s)
+              </span>
             </span>
           </span>
-        </span>
-        <span
-          v-if="deletingId !== doc.docId"
-          @click.stop="$emit('delete-document', doc)"
-          class="absolute top-2 right-2 p-1 rounded opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all"
-          title="Delete document"
-        >
-          <Trash2 class="h-3.5 w-3.5" />
-        </span>
-      </button>
+          <span
+            v-if="deletingId !== doc.docId"
+            @click.stop="$emit('delete-document', doc)"
+            class="absolute top-2 right-2 p-1 rounded opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all"
+            title="Delete document"
+          >
+            <Trash2 class="h-3.5 w-3.5" />
+          </span>
+        </button>
+      </template>
     </div>
 
     <button

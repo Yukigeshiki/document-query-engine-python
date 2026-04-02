@@ -9,14 +9,12 @@
           </p>
         </div>
 
-        <!-- Upload Another button (shown on success or failure) -->
-        <button
-          v-if="status === 'success' || status === 'failure'"
-          @click="reset"
-          class="px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-accent transition-colors"
-        >
+        <Button v-if="status === 'success'" variant="outline" @click="reset">
           Upload Another
-        </button>
+        </Button>
+        <Button v-if="status === 'failure'" variant="outline" @click="reset">
+          Try Again
+        </Button>
       </div>
 
       <!-- File drop zone (shown when idle) -->
@@ -44,53 +42,6 @@
         :error="error"
       />
 
-      <!-- Graph section (shown on success or when viewing a past document) -->
-      <div v-if="showGraph" class="space-y-4">
-        <div class="flex items-center gap-3">
-          <h2 class="text-lg font-semibold">Knowledge Graph</h2>
-          <span v-if="isLoadingGraph" class="text-xs text-muted-foreground">Loading graph...</span>
-        </div>
-
-        <!-- Entity search -->
-        <div class="flex gap-2">
-          <input
-            v-model="searchEntity"
-            placeholder="Search entity (e.g., Alice)..."
-            class="flex-1 px-3 py-2 border border-input rounded-md text-sm bg-background"
-            @keyup.enter="searchSubgraph"
-          />
-          <button
-            @click="searchSubgraph"
-            :disabled="!searchEntity.trim()"
-            class="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
-          >
-            Focus
-          </button>
-          <button
-            @click="loadDocumentGraph"
-            class="px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-accent transition-colors"
-          >
-            Reset
-          </button>
-        </div>
-
-        <!-- Graph error -->
-        <p v-if="graphError" class="text-sm text-destructive">
-          {{ graphError }}
-        </p>
-
-        <!-- Graph visualization -->
-        <KnowledgeGraph
-          v-if="graphNodes.length > 0"
-          :nodes="graphNodes"
-          :edges="graphEdges"
-        />
-
-        <p v-else-if="!isLoadingGraph && !graphError" class="text-sm text-muted-foreground">
-          No graph data available. The knowledge graph may be empty.
-        </p>
-      </div>
-
       <!-- Delete error -->
       <p v-if="deleteError" class="text-sm text-destructive">
         {{ deleteError }}
@@ -106,7 +57,55 @@
         @select-document="onSelectDocument"
         @delete-document="onRequestDelete"
         @load-more="loadMore"
-      />
+      >
+        <template #above-selected>
+          <div v-if="showGraph" class="space-y-4 my-3">
+            <div class="flex items-center gap-3">
+              <h2 class="text-lg font-semibold">Knowledge Graph</h2>
+              <span v-if="isLoadingGraph" class="text-xs text-muted-foreground">Loading graph...</span>
+            </div>
+
+            <!-- Entity search -->
+            <div class="flex gap-2">
+              <input
+                v-model="searchEntity"
+                placeholder="Search entity (e.g., Alice)..."
+                class="flex-1 px-3 py-2 border border-input rounded-md text-sm bg-background"
+                @keyup.enter="searchSubgraph"
+              />
+              <button
+                @click="searchSubgraph"
+                :disabled="!searchEntity.trim()"
+                class="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+              >
+                Focus
+              </button>
+              <button
+                @click="loadDocumentGraph"
+                class="px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-accent transition-colors"
+              >
+                Reset
+              </button>
+            </div>
+
+            <!-- Graph error -->
+            <p v-if="graphError" class="text-sm text-destructive">
+              {{ graphError }}
+            </p>
+
+            <!-- Graph visualization -->
+            <KnowledgeGraph
+              v-if="graphNodes.length > 0"
+              :nodes="graphNodes"
+              :edges="graphEdges"
+            />
+
+            <p v-else-if="!isLoadingGraph && !graphError" class="text-sm text-muted-foreground">
+              No graph data available. The knowledge graph may be empty.
+            </p>
+          </div>
+        </template>
+      </DocumentList>
 
       <!-- Delete confirmation dialog -->
       <DeleteDocumentDialog
@@ -126,6 +125,7 @@ import IngestionProgress from '@/components/upload/IngestionProgress.vue'
 import KnowledgeGraph from '@/components/graph/KnowledgeGraph.vue'
 import DocumentList from '@/components/upload/DocumentList.vue'
 import DeleteDocumentDialog from '@/components/upload/DeleteDocumentDialog.vue'
+import { Button } from '@/components/ui/button'
 import { useFileUpload } from '@/composables/useFileUpload'
 import { useDocumentHistory } from '@/composables/useDocumentHistory'
 import { getSubgraph, getDocumentGraph, deleteDocument } from '@/services/queryEngine'
@@ -251,6 +251,10 @@ async function onConfirmDelete(doc: DocumentInfo) {
 }
 
 function reset() {
+  if (successResetTimer) {
+    clearTimeout(successResetTimer)
+    successResetTimer = null
+  }
   resetUpload()
   graphNodes.value = []
   graphEdges.value = []
@@ -260,9 +264,18 @@ function reset() {
   selectedDocIds.value = []
 }
 
-// When ingestion succeeds, refresh document list and load the new document's graph
+// When ingestion succeeds, refresh document list, load the new document's
+// graph, and auto-reset to the upload form after 10 seconds.
+let successResetTimer: ReturnType<typeof setTimeout> | null = null
+onUnmounted(() => { if (successResetTimer) clearTimeout(successResetTimer) })
+
 watch(status, async (newStatus) => {
+  if (successResetTimer) {
+    clearTimeout(successResetTimer)
+    successResetTimer = null
+  }
   if (newStatus === 'success') {
+    successResetTimer = setTimeout(() => resetUpload(), 10000)
     const freshDocs = await fetchDocuments()
     if (freshDocs.length > 0) {
       const newDoc = freshDocs[0]
