@@ -59,6 +59,13 @@ class QueryError(AppError):
     error: str = "query_error"
 
 
+class DeletionError(AppError):
+    """Raised when document deletion from the knowledge graph fails."""
+
+    status_code: int = 500
+    error: str = "deletion_error"
+
+
 class ConnectorError(AppError):
     """Raised when a document connector fails to load documents."""
 

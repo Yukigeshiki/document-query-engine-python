@@ -91,29 +91,45 @@
         </p>
       </div>
 
+      <!-- Delete error -->
+      <p v-if="deleteError" class="text-sm text-destructive">
+        {{ deleteError }}
+      </p>
+
       <!-- Document history -->
       <DocumentList
         :documents="documents"
         :selected-id="selectedDocId"
+        :deleting-id="deletingDocId"
         :has-more="hasMore"
         :is-loading="isLoadingDocs"
         @select-document="onSelectDocument"
+        @delete-document="onRequestDelete"
         @load-more="loadMore"
+      />
+
+      <!-- Delete confirmation dialog -->
+      <DeleteDocumentDialog
+        :doc="docToDelete"
+        @update:doc="docToDelete = $event"
+        @confirm="onConfirmDelete"
       />
     </div>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import AppLayout from '@/layouts/AppLayout.vue'
 import FileDropZone from '@/components/upload/FileDropZone.vue'
 import IngestionProgress from '@/components/upload/IngestionProgress.vue'
 import KnowledgeGraph from '@/components/graph/KnowledgeGraph.vue'
 import DocumentList from '@/components/upload/DocumentList.vue'
+import DeleteDocumentDialog from '@/components/upload/DeleteDocumentDialog.vue'
 import { useFileUpload } from '@/composables/useFileUpload'
 import { useDocumentHistory } from '@/composables/useDocumentHistory'
-import { getSubgraph, getDocumentGraph } from '@/services/queryEngine'
+import { getSubgraph, getDocumentGraph, deleteDocument } from '@/services/queryEngine'
+import { pollTask } from '@/composables/useTaskPoller'
 import type { SubgraphNode, SubgraphEdge, DocumentInfo } from '@/types/queryEngine'
 
 const { file, taskId, status, result, error, upload, reset: resetUpload } = useFileUpload()
@@ -193,6 +209,44 @@ async function onSelectDocument(doc: DocumentInfo) {
     graphError.value = err instanceof Error ? err.message : 'Failed to load document graph'
   } finally {
     isLoadingGraph.value = false
+  }
+}
+
+const deletingDocId = ref<string | null>(null)
+const deleteError = ref<string | null>(null)
+const docToDelete = ref<DocumentInfo | null>(null)
+let cancelDeletePoller: (() => void) | null = null
+onUnmounted(() => cancelDeletePoller?.())
+
+function onRequestDelete(doc: DocumentInfo) {
+  docToDelete.value = doc
+}
+
+async function onConfirmDelete(doc: DocumentInfo) {
+  docToDelete.value = null
+  deletingDocId.value = doc.docId
+  deleteError.value = null
+  try {
+    const { taskId: deleteTaskId } = await deleteDocument(doc.docId)
+
+    const poller = pollTask(deleteTaskId)
+    cancelDeletePoller = poller.cancel
+    await poller.promise
+
+    if (selectedDocId.value === doc.docId) {
+      selectedDocId.value = null
+      selectedDocIds.value = []
+      graphNodes.value = []
+      graphEdges.value = []
+      graphError.value = null
+    }
+
+    await fetchDocuments()
+  } catch (err) {
+    deleteError.value = err instanceof Error ? err.message : 'Failed to delete document'
+  } finally {
+    deletingDocId.value = null
+    cancelDeletePoller = null
   }
 }
 

@@ -17,10 +17,10 @@ from app.models.knowledge_graph import (
     SourceIngestRequest,
     SubgraphResponse,
 )
-from app.models.tasks import SourceIngestAcceptedResponse
+from app.models.tasks import TaskAcceptedResponse
 from app.services.knowledge_graph import KnowledgeGraphService
 from app.services.upload import UploadService
-from app.worker.tasks import ingest_source_task
+from app.worker.tasks import delete_document_task, ingest_source_task
 
 logger = structlog.stdlib.get_logger(__name__)
 
@@ -45,6 +45,31 @@ async def list_documents(
     )
 
 
+@router.delete(
+    "/documents/{doc_id}",
+    response_model=TaskAcceptedResponse,
+    status_code=202,
+)
+@limiter.limit(settings.rate_limit_default)
+async def delete_document(
+    request: Request,
+    doc_id: str,
+) -> TaskAcceptedResponse:
+    """
+    Submit a document deletion job for background processing.
+
+    Deletes the document from all storage layers (Neo4j, pgvector, docstore).
+    Returns a task ID for polling. Retries automatically on partial failure.
+    """
+    try:
+        result = delete_document_task.delay(doc_id=doc_id)
+    except Exception as exc:
+        raise ServiceUnavailableError(
+            detail=f"Failed to submit deletion task: {exc}"
+        ) from exc
+    return TaskAcceptedResponse(task_id=result.id)
+
+
 @router.post("/ingest", response_model=IngestResponse)
 @limiter.limit(settings.rate_limit_ingest)
 async def ingest_document(
@@ -62,14 +87,14 @@ async def ingest_document(
 
 @router.post(
     "/ingest/source",
-    response_model=SourceIngestAcceptedResponse,
+    response_model=TaskAcceptedResponse,
     status_code=202,
 )
 @limiter.limit(settings.rate_limit_ingest)
 async def ingest_from_source(
     request: Request,
     body: SourceIngestRequest,
-) -> SourceIngestAcceptedResponse:
+) -> TaskAcceptedResponse:
     """
     Submit a bulk ingestion job for background processing.
 
@@ -85,12 +110,12 @@ async def ingest_from_source(
         raise ServiceUnavailableError(
             detail=f"Failed to submit ingestion task: {exc}"
         ) from exc
-    return SourceIngestAcceptedResponse(task_id=result.id)
+    return TaskAcceptedResponse(task_id=result.id)
 
 
 @router.post(
     "/ingest/upload",
-    response_model=SourceIngestAcceptedResponse,
+    response_model=TaskAcceptedResponse,
     status_code=202,
 )
 @limiter.limit(settings.rate_limit_ingest)
@@ -98,7 +123,7 @@ async def ingest_upload(
     request: Request,
     file: UploadFile,
     upload_service: UploadService = Depends(get_upload_service),
-) -> SourceIngestAcceptedResponse:
+) -> TaskAcceptedResponse:
     """
     Upload a document for async ingestion into the knowledge graph.
 
@@ -114,7 +139,7 @@ async def ingest_upload(
         raise ServiceUnavailableError(
             detail=f"Failed to submit ingestion task: {exc}"
         ) from exc
-    return SourceIngestAcceptedResponse(task_id=result.id)
+    return TaskAcceptedResponse(task_id=result.id)
 
 
 @router.post("/query", response_model=QueryResponse)

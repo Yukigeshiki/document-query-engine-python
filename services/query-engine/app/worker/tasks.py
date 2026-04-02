@@ -8,6 +8,7 @@ import structlog
 
 from app.connectors.setup import register_default_connectors
 from app.core.config import settings
+from app.core.errors import BadRequestError, NotFoundError
 from app.core.gcs import get_gcs_client
 from app.core.logging import setup_logging
 from app.core.postgres import get_pg_engine
@@ -67,10 +68,36 @@ def ingest_source_task(
     )
 
     return {
+        "task_type": "ingest_source",
         "source_type": source_type,
         "total_documents": total_documents,
         "total_triplets": total_triplets,
         "errors": errors,
+    }
+
+
+@celery_app.task(
+    name="delete_document",
+    autoretry_for=(Exception,),
+    dont_autoretry_for=(NotFoundError, BadRequestError),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    max_retries=3,
+)
+def delete_document_task(doc_id: str) -> dict[str, Any]:
+    """
+    Background task: delete a document from all storage layers.
+
+    Retries automatically on failure to avoid orphaned records across
+    Neo4j, pgvector, and PostgreSQL docstore.
+    """
+    kg_service = _get_kg_service()
+    deleted_ids = asyncio.run(kg_service.delete_document(doc_id=doc_id))
+
+    return {
+        "task_type": "delete_document",
+        "doc_id": doc_id,
+        "deleted_doc_ids": deleted_ids,
     }
 
 

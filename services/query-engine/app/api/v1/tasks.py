@@ -1,5 +1,7 @@
 """Background task status and cancellation endpoints."""
 
+from typing import Any
+
 import structlog
 from celery.result import AsyncResult
 from fastapi import APIRouter, Request
@@ -7,6 +9,7 @@ from fastapi import APIRouter, Request
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.models.tasks import (
+    DeleteDocumentResult,
     SourceIngestResult,
     TaskCancelledResponse,
     TaskStatus,
@@ -40,7 +43,12 @@ async def get_task_status(request: Request, task_id: str) -> TaskStatusResponse:
     error = None
 
     if result.successful():
-        task_result = SourceIngestResult(**result.result)
+        raw: dict[str, Any] = result.result
+        task_type = raw.get("task_type")
+        if task_type == "delete_document":
+            task_result = DeleteDocumentResult(**raw)
+        else:
+            task_result = SourceIngestResult(**raw)
     elif result.failed():
         error = str(result.result)
 

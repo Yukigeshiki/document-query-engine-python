@@ -21,10 +21,15 @@ export interface SubgraphResponse {
 
 export type TaskStatus = 'pending' | 'started' | 'success' | 'failure' | 'revoked'
 
+export interface DeleteDocumentResult {
+  docId: string
+  deletedDocIds: string[]
+}
+
 export interface TaskStatusResponse {
   taskId: string
   status: TaskStatus
-  result: IngestResult | null
+  result: IngestResult | DeleteDocumentResult | null
   error: string | null
 }
 

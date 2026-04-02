@@ -23,7 +23,7 @@
         Drag & drop a file here, or click to browse
       </p>
       <p class="text-xs text-muted-foreground">
-        PDF, DOCX, or TXT — max 20MB
+        PDF, DOCX, or TXT — max 5MB
       </p>
     </div>
 
@@ -46,7 +46,7 @@ import { ref } from 'vue'
 import { Upload, FileText } from 'lucide-vue-next'
 
 const ACCEPTED_EXTENSIONS = '.pdf,.docx,.txt'
-const MAX_FILE_SIZE = 20 * 1024 * 1024 // 20MB
+const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
 
 const emit = defineEmits<{
   'file-selected': [file: File]

@@ -22,6 +22,7 @@ from llama_index.core.graph_stores.simple import SimpleGraphStore
 from llama_index.core.graph_stores.types import GraphStore
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.query_engine import RetrieverQueryEngine
+from llama_index.core.schema import MetadataMode
 from llama_index.core.response_synthesizers import get_response_synthesizer
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.graph_stores.neo4j import Neo4jGraphStore
@@ -32,7 +33,13 @@ from llama_index.storage.kvstore.postgres.base import PostgresKVStore
 from llama_index.vector_stores.postgres import PGVectorStore
 
 from app.core.config import Settings as AppSettings
-from app.core.errors import IngestionError, QueryError, ServiceUnavailableError
+from app.core.errors import (
+    DeletionError,
+    IngestionError,
+    NotFoundError,
+    QueryError,
+    ServiceUnavailableError,
+)
 from app.core.metrics import (
     kg_cache_up,
     kg_graph_store_up,
@@ -263,7 +270,41 @@ class KnowledgeGraphService:
             except Exception as exc:
                 logger.warning("triplet_count_failed", error=str(exc))
                 return -1
-        return len(self._simple_store._data.graph_dict)
+        return sum(
+            len(rels) for rels in self._graph_store.get_rel_map().values()
+        )
+
+    def _upsert_triplet_with_source(
+        self, subj: str, rel: str, obj: str, source_node_id: str
+    ) -> None:
+        """
+        Upsert a triplet and track which node produced it.
+
+        On Neo4j, stores a `source_node_ids` list property on the
+        relationship so deletion can precisely target the right edges.
+        On SimpleGraphStore (in-memory fallback), delegates to the
+        plain upsert — no source tracking available.
+        """
+        if self._neo4j_enabled:
+            rel_type = rel.replace(" ", "_").upper()
+            label = self._neo4j_store.node_label
+            cypher = (
+                f"MERGE (n1:`{label}` {{id: $subj}}) "
+                f"MERGE (n2:`{label}` {{id: $obj}}) "
+                f"MERGE (n1)-[r:`{rel_type}`]->(n2) "
+                "ON CREATE SET r.source_node_ids = [$source_node_id] "
+                "ON MATCH SET r.source_node_ids = CASE "
+                "  WHEN $source_node_id IN r.source_node_ids "
+                "    THEN r.source_node_ids "
+                "  ELSE r.source_node_ids + $source_node_id "
+                "END"
+            )
+            self._neo4j_store.query(
+                cypher,
+                {"subj": subj, "obj": obj, "source_node_id": source_node_id},
+            )
+        else:
+            self._graph_store.upsert_triplet(subj, rel, obj)
 
     @property
     def _neo4j_store(self) -> Neo4jGraphStore:
@@ -382,6 +423,208 @@ class KnowledgeGraphService:
 
         return await loop.run_in_executor(None, _list_sync)
 
+    def _delete_neo4j_provenance(
+        self,
+        node_ids: set[str],
+        index_struct: Any,
+    ) -> None:
+        """
+        Delete Neo4j relationships using source_node_ids provenance.
+
+        Precisely removes only the node_ids belonging to the deleted
+        document from each relationship's `source_node_ids` list.
+        Relationships whose list becomes empty are deleted.
+        Orphaned Entity nodes are cleaned up at the end.
+        """
+        node_id_list = list(node_ids)
+        label = self._neo4j_store.node_label
+
+        # Determine which entities our document contributed
+        our_entities: set[str] = set()
+        for entity, node_id_set in index_struct.table.items():
+            if node_id_set.intersection(node_ids):
+                our_entities.add(entity)
+
+        entity_list = list(our_entities)
+
+        # entity -> True if fully orphaned (sole owner), False if shared
+        entity_actions: dict[str, bool] = {
+            entity: (index_struct.table[entity] - node_ids) == set()
+            for entity in our_entities
+        }
+
+        # Step 1: Remove our node_ids from relationship provenance.
+        # Delete the relationship entirely when no source_node_ids remain.
+        self._neo4j_store.query(
+            "MATCH ()-[r]->() "
+            "WHERE ANY(nid IN r.source_node_ids WHERE nid IN $node_ids) "
+            "SET r.source_node_ids = "
+            "  [x IN r.source_node_ids WHERE NOT x IN $node_ids] "
+            "WITH r WHERE size(r.source_node_ids) = 0 "
+            "DELETE r",
+            {"node_ids": node_id_list},
+        )
+
+        # Step 2: Clean up orphaned Entity nodes (no remaining edges).
+        if entity_list:
+            self._neo4j_store.query(
+                f"MATCH (n:`{label}`) "
+                "WHERE n.id IN $entities AND NOT (n)--() "
+                "DELETE n",
+                {"entities": entity_list},
+            )
+
+        # Step 4: Update the index struct.
+        for entity, remove_entirely in entity_actions.items():
+            if remove_entirely:
+                del index_struct.table[entity]
+            else:
+                index_struct.table[entity] -= node_ids
+
+        self._storage_context.index_store.add_index_struct(index_struct)
+
+    def _delete_simple_store_heuristic(
+        self,
+        node_ids: set[str],
+        index_struct: Any,
+    ) -> None:
+        """
+        Delete triplets from SimpleGraphStore using entity-pair heuristic.
+
+        Since SimpleGraphStore cannot store source metadata on triplets,
+        we use the best-effort approach: delete triplets where both
+        endpoints share a common source node from the deleted document,
+        and fully clean up orphaned entities.
+        """
+        entity_to_our_nodes: dict[str, set[str]] = {}
+        for entity, node_id_set in index_struct.table.items():
+            overlap = node_id_set.intersection(node_ids)
+            if overlap:
+                entity_to_our_nodes[entity] = overlap
+
+        our_entities = set(entity_to_our_nodes.keys())
+        entity_actions: dict[str, bool] = {
+            entity: (index_struct.table[entity] - node_ids) == set()
+            for entity in our_entities
+        }
+
+        # Delete triplets where both endpoints share a common source node
+        for entity in our_entities:
+            for rel, obj in list(self._graph_store.get(entity)):
+                if obj not in our_entities:
+                    continue
+                common = entity_to_our_nodes[entity] & entity_to_our_nodes.get(obj, set())
+                if common:
+                    self._graph_store.delete(entity, rel, obj)
+
+        # Fully-orphaned entities: delete all remaining triplets
+        for entity, remove_entirely in entity_actions.items():
+            if not remove_entirely:
+                continue
+            for rel, obj in list(self._graph_store.get(entity)):
+                self._graph_store.delete(entity, rel, obj)
+            # Inbound: scan all relationships for ones targeting this entity
+            for subj, rels in self._graph_store.get_rel_map().items():
+                for _, rel, obj in rels:
+                    if obj == entity:
+                        self._graph_store.delete(subj, rel, obj)
+
+        # Update the index struct
+        for entity, remove_entirely in entity_actions.items():
+            if remove_entirely:
+                del index_struct.table[entity]
+            else:
+                index_struct.table[entity] -= node_ids
+
+        self._storage_context.index_store.add_index_struct(index_struct)
+
+    async def delete_document(self, doc_id: str) -> list[str]:
+        """
+        Delete a document and all its data from every storage layer.
+
+        Resolves all doc_ids for the grouped document (multi-chunk uploads
+        share the same file_path) and removes them from the KG index struct,
+        graph store, vector index, and docstore.
+
+        Deletion order is chosen for retry safety — the docstore (source of
+        truth for node_ids) is deleted last so retries can still resolve
+        what needs cleaning up. Each store's delete is idempotent.
+
+        Returns the list of deleted doc_ids.
+        """
+        loop = asyncio.get_running_loop()
+
+        def _delete_sync() -> list[str]:
+            ref_doc_info = self._storage_context.docstore.get_all_ref_doc_info()
+            if doc_id not in ref_doc_info:
+                raise NotFoundError(detail=f"Document {doc_id} not found")
+
+            # Resolve all doc_ids sharing the same group key (same logic as list_documents)
+            metadata = ref_doc_info[doc_id].metadata or {}
+            group_key = (
+                metadata.get("file_path")
+                or metadata.get("file_name")
+                or doc_id
+            )
+            all_doc_ids = [
+                did
+                for did, info in ref_doc_info.items()
+                if (info.metadata or {}).get("file_path", (info.metadata or {}).get("file_name", did))
+                == group_key
+            ]
+
+            # Collect all node_ids across grouped doc_ids
+            all_node_ids: set[str] = set()
+            for did in all_doc_ids:
+                info = ref_doc_info.get(did)
+                if info:
+                    all_node_ids.update(info.node_ids)
+
+            # 1. Clean up KG graph store + index struct.
+            #    KnowledgeGraphIndex._delete_node raises NotImplementedError,
+            #    so we handle this manually.  Neo4j uses source_node_ids
+            #    provenance for precise deletion; SimpleGraphStore falls
+            #    back to the entity-pair heuristic.
+            index_struct = self._index.index_struct
+            if self._neo4j_enabled:
+                self._delete_neo4j_provenance(all_node_ids, index_struct)
+            else:
+                self._delete_simple_store_heuristic(all_node_ids, index_struct)
+
+            # 2. Delete from vector index (pgvector) — idempotent
+            for ref_doc_id in all_doc_ids:
+                self._vector_index.delete_ref_doc(
+                    ref_doc_id, delete_from_docstore=False
+                )
+
+            # 3. Delete from docstore last — it's the source of truth for
+            #    node_ids, so keeping it until the end makes retries safe.
+            for ref_doc_id in all_doc_ids:
+                self._storage_context.docstore.delete_ref_doc(
+                    ref_doc_id, raise_error=False
+                )
+
+            return all_doc_ids
+
+        try:
+            deleted_ids = await loop.run_in_executor(None, _delete_sync)
+            logger.info(
+                "document_deleted",
+                doc_id=doc_id,
+                deleted_doc_ids=deleted_ids,
+            )
+            return deleted_ids
+        except NotFoundError:
+            raise
+        except Exception as exc:
+            logger.error("deletion_failed", doc_id=doc_id, error=str(exc))
+            raise DeletionError(
+                detail=f"Failed to delete document: {exc}"
+            ) from exc
+        finally:
+            if self._cache is not None:
+                await self._cache.invalidate()
+
     async def ingest(
         self,
         text: str,
@@ -435,8 +678,35 @@ class KnowledgeGraphService:
                 # triplets (queryable via vector_only mode) — safer partial state.
                 self._vector_index.insert_nodes(nodes)
 
+                # VectorStoreIndex skips the docstore write when
+                # PGVectorStore.stores_text is True.  Write explicitly
+                # so list_documents / delete_document can find RefDocInfo.
+                self._storage_context.docstore.add_documents(
+                    nodes, allow_update=True
+                )
+
                 triplets_before = self._count_triplets()
-                self._index.insert_nodes(nodes)
+
+                # Manual KG insertion: extract triplets ourselves so we
+                # can store source_node_ids on Neo4j relationships for
+                # precise deletion later.
+                for node in nodes:
+                    # No public API for triplet extraction; _extract_triplets
+                    # is the only entry point (class is deprecated upstream).
+                    triplets = self._index._extract_triplets(
+                        node.get_content(metadata_mode=MetadataMode.LLM)
+                    )
+                    for subj, rel, obj in triplets:
+                        self._upsert_triplet_with_source(
+                            subj, rel, obj, node.node_id
+                        )
+                        self._index.index_struct.add_node(
+                            [subj, obj], node
+                        )
+                self._storage_context.index_store.add_index_struct(
+                    self._index.index_struct
+                )
+
                 triplets_after = self._count_triplets()
                 return max(triplets_after - triplets_before, 0)
 

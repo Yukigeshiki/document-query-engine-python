@@ -16,7 +16,7 @@ from app.models.knowledge_graph import SourceType
 logger = structlog.stdlib.get_logger(__name__)
 UPLOADS_SUBDIR = "uploads"
 CHUNK_SIZE = 64 * 1024  # 64KB chunks for streaming
-MAX_UPLOAD_SIZE = 20 * 1024 * 1024  # 20MB
+MAX_UPLOAD_SIZE = 5 * 1024 * 1024  # 5MB
 
 
 class UploadService:
@@ -32,7 +32,7 @@ class UploadService:
         """
         Save an uploaded file to GCS and return the connector config for ingestion.
 
-        Reads the file in chunks to enforce a 20MB size limit,
+        Reads the file in chunks to enforce a 5MB size limit,
         then uploads to GCS in a thread executor.
 
         Returns (source_type, config) suitable for ingest_source_task.

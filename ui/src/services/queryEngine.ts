@@ -78,6 +78,19 @@ export async function listDocuments(
 }
 
 /**
+ * Submit a document deletion job for background processing.
+ *
+ * @param docId - The primary document ID to delete.
+ * @returns The accepted response with a task ID for polling.
+ */
+export async function deleteDocument(docId: string): Promise<UploadAcceptedResponse> {
+  const { data } = await apiClient.delete<UploadAcceptedResponse>(
+    `/api/v1/kg/documents/${docId}`,
+  )
+  return data
+}
+
+/**
  * Fetch the graph for a specific ingested document.
  *
  * @param docIds - The document IDs to fetch the graph for (supports multi-chunk docs).

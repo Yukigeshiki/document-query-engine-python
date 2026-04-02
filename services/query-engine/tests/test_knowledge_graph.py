@@ -223,3 +223,20 @@ async def test_subgraph_missing_entity(kg_client: AsyncClient) -> None:
     """Verify validation rejects missing entity parameter."""
     response = await kg_client.get("/api/v1/kg/subgraph")
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_delete_document_accepted(kg_client: AsyncClient, mock_kg_service: AsyncMock) -> None:
+    """Verify delete endpoint returns 202 with a task ID."""
+    from unittest.mock import patch, MagicMock
+
+    mock_result = MagicMock()
+    mock_result.id = "task-delete-1"
+    with patch("app.api.v1.knowledge_graph.delete_document_task") as mock_task:
+        mock_task.delay.return_value = mock_result
+        response = await kg_client.delete("/api/v1/kg/documents/doc-1")
+
+    assert response.status_code == 202
+    data = response.json()
+    assert data["taskId"] == "task-delete-1"
+    mock_task.delay.assert_called_once_with(doc_id="doc-1")
