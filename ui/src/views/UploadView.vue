@@ -275,7 +275,15 @@ watch(status, async (newStatus) => {
     successResetTimer = null
   }
   if (newStatus === 'success') {
-    successResetTimer = setTimeout(() => resetUpload(), 10000)
+    successResetTimer = setTimeout(() => {
+      resetUpload()
+      selectedDocId.value = null
+      selectedDocIds.value = []
+      graphNodes.value = []
+      graphEdges.value = []
+      graphError.value = null
+      searchEntity.value = ''
+    }, 10000)
     const freshDocs = await fetchDocuments()
     if (freshDocs.length > 0) {
       const newDoc = freshDocs[0]

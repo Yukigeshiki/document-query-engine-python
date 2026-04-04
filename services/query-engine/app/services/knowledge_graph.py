@@ -417,7 +417,7 @@ class KnowledgeGraphService:
                 grouped[group_key]["node_count"] += len(info.node_ids)
                 grouped[group_key]["doc_ids"].append(doc_id)
 
-            # Newest first by ingested_at timestamp
+            # Newest first by ingested_at
             all_docs = sorted(
                 grouped.values(),
                 key=lambda d: d["metadata"].get("ingested_at", ""),
