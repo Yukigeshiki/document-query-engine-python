@@ -4,12 +4,12 @@
 [![API Build](https://github.com/Yukigeshiki/agent-query-engine-python/actions/workflows/api-build.yml/badge.svg)](https://github.com/Yukigeshiki/agent-query-engine-python/actions/workflows/api-build.yml)
 [![UI Build](https://github.com/Yukigeshiki/agent-query-engine-python/actions/workflows/ui-build.yml/badge.svg)](https://github.com/Yukigeshiki/agent-query-engine-python/actions/workflows/ui-build.yml)
 
-A document ingestion and query engine built with Python, FastAPI, and LlamaIndex. Upload documents (PDF, DOCX, TXT), extract knowledge graph triplets and vector embeddings, then query across both using natural language. LlamaIndex orchestrates the full pipeline — chunking documents, extracting entity-relationship triplets via OpenAI into Neo4j, embedding chunks into pgvector, and synthesizing answers from dual retrieval (graph traversal + vector similarity). Documents are stored in GCS and processed asynchronously via Celery. The UI provides document upload with interactive graph visualization and a query interface with retrieval mode selection.
+A document ingestion and query engine built with Python/FastAPI, LlamaIndex, Neo4j, and pgvector. Upload documents (PDF, DOCX, TXT — max 5MB), extract knowledge graph triplets and vector embeddings, then query across both using natural language. LlamaIndex orchestrates the full pipeline — chunking documents, extracting entity-relationship triplets via OpenAI into Neo4j, embedding chunks into pgvector, and synthesizing answers from dual retrieval (graph traversal + vector similarity). Documents are stored in GCS and processed asynchronously via Celery. The UI provides testing for document upload with interactive graph visualization, a query interface with retrieval mode selection, and document deletion.
 
 ## How It Works
 
 1. **Upload** — a document is uploaded through the UI, streamed to GCS, and a Celery task is dispatched for async processing
-2. **Ingestion** — the document is chunked via LlamaIndex's SentenceSplitter, embedded via OpenAI, and triplet-extracted into Neo4j; vector embeddings are stored in pgvector; all metadata is preserved in the docstore for display
+2. **Ingestion** — the document is chunked via LlamaIndex's SentenceSplitter, embedded via OpenAI, and triplet-extracted into Neo4j with `source_node_ids` provenance tracking on each relationship; vector embeddings are stored in pgvector; all metadata is preserved in the docstore for display
 3. **Query** — users ask natural language questions with three retrieval modes:
    - **Dual** (default) — merges knowledge graph traversal + vector similarity, deduplicates by node ID, and synthesizes a response from both sources
    - **KG Only** — graph traversal through Neo4j entity relationships
@@ -82,7 +82,7 @@ The UI provides a query page for asking questions about your documents and an up
 ```
 
 - **FastAPI** — API server with rate limiting, request tracing, Prometheus metrics
-- **Celery Worker** — async document ingestion (chunking, embedding, triplet extraction)
+- **Celery Worker** — async document ingestion (chunking, embedding, triplet extraction) and deletion (precise removal using `source_node_ids` provenance)
 - **Celery Beat** — scheduled cleanup of expired GCS uploads (24h TTL)
 - **Neo4j** — knowledge graph storage (entity-relationship triplets)
 - **PostgreSQL/pgvector** — vector embeddings, docstore, index store, semantic query cache
@@ -123,8 +123,9 @@ curl -X POST http://localhost:8000/api/v1/kg/ingest/upload \
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/kg/query` | Query documents with natural language |
-| POST | `/kg/ingest/upload` | Upload a file for async ingestion |
-| GET | `/kg/documents` | List ingested documents (paginated) |
+| POST | `/kg/ingest/upload` | Upload a file for async ingestion (max 5MB) |
+| GET | `/kg/documents` | List ingested documents (paginated, newest first) |
+| DELETE | `/kg/documents/{docId}` | Delete a document from all storage layers |
 | GET | `/kg/documents/graph` | Get knowledge graph for a document |
 | GET | `/kg/subgraph` | Get subgraph around an entity |
 | GET | `/tasks/{taskId}` | Poll background task status |
