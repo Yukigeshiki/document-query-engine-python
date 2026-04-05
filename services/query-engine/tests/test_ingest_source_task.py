@@ -27,6 +27,7 @@ def test_ingest_source_task_returns_result(
 
     result = ingest_source_task(SourceType.GCS, {"bucket": "test", "prefix": "docs/"})
 
+    assert result["task_type"] == "ingest_source"
     assert result["source_type"] == SourceType.GCS
     assert result["total_documents"] == 2
     assert result["total_triplets"] == 10

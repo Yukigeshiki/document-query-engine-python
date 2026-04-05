@@ -58,6 +58,7 @@ async def test_get_task_status_success(
     instance.successful.return_value = True
     instance.failed.return_value = False
     instance.result = {
+        "task_type": "ingest_source",
         "source_type": SourceType.GCS,
         "total_documents": 5,
         "total_triplets": 20,
@@ -69,8 +70,35 @@ async def test_get_task_status_success(
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "success"
+    assert data["result"]["taskType"] == "ingest_source"
     assert data["result"]["totalDocuments"] == 5
     assert data["result"]["totalTriplets"] == 20
+
+
+@pytest.mark.asyncio
+@patch("app.api.v1.tasks.AsyncResult")
+async def test_get_task_status_delete_success(
+    mock_async_result: MagicMock, client: AsyncClient
+) -> None:
+    """Verify successful delete task returns delete result."""
+    instance = MagicMock()
+    instance.status = "SUCCESS"
+    instance.successful.return_value = True
+    instance.failed.return_value = False
+    instance.result = {
+        "task_type": "delete_document",
+        "doc_id": "doc-1",
+        "deleted_doc_ids": ["doc-1", "doc-1a"],
+    }
+    mock_async_result.return_value = instance
+
+    response = await client.get("/api/v1/tasks/some-id")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["result"]["taskType"] == "delete_document"
+    assert data["result"]["docId"] == "doc-1"
+    assert data["result"]["deletedDocIds"] == ["doc-1", "doc-1a"]
 
 
 @pytest.mark.asyncio
