@@ -4,11 +4,11 @@
 [![API Build](https://github.com/Yukigeshiki/document-query-engine-python/actions/workflows/api-build.yml/badge.svg)](https://github.com/Yukigeshiki/document-query-engine-python/actions/workflows/api-build.yml)
 [![UI Build](https://github.com/Yukigeshiki/document-query-engine-python/actions/workflows/ui-build.yml/badge.svg)](https://github.com/Yukigeshiki/document-query-engine-python/actions/workflows/ui-build.yml)
 
-A document ingestion and query engine built with Python/FastAPI, LlamaIndex, Neo4j, and pgvector. Upload documents (PDF, DOCX, TXT — max 5MB), extract knowledge graph triplets and vector embeddings, then query across both using natural language. LlamaIndex orchestrates the full pipeline — chunking documents, extracting entity-relationship triplets via OpenAI into Neo4j, embedding chunks into pgvector, and synthesizing answers from dual retrieval (graph traversal + vector similarity). Documents are stored in GCS and processed asynchronously via Celery. The UI provides testing for document upload with interactive graph visualization, a query interface with retrieval mode selection, and document deletion.
+A document ingestion and query engine built with Python/FastAPI, LlamaIndex, Neo4j, and pgvector. Upload documents (PDF, DOCX, TXT), extract knowledge graph triplets and vector embeddings, then query across both using natural language. LlamaIndex orchestrates the full pipeline — chunking documents, extracting entity-relationship triplets via OpenAI into Neo4j, embedding chunks into pgvector, and synthesizing answers from dual retrieval (graph traversal + vector similarity). Documents are stored in GCS and processed asynchronously via Celery. The UI provides testing for document upload with interactive graph visualization, a query interface with retrieval mode selection, and document deletion.
 
 ## How It Works
 
-1. **Upload** — a document is uploaded through the UI, streamed to GCS, and a Celery task is dispatched for async processing
+1. **Upload** — a document is uploaded, streamed to GCS, and a Celery task is dispatched for async processing
 2. **Ingestion** — the document is chunked via LlamaIndex's SentenceSplitter, embedded via OpenAI, and triplet-extracted into Neo4j with `source_node_ids` provenance tracking on each relationship; vector embeddings are stored in pgvector; all metadata is preserved in the docstore for display
 3. **Query** — users ask natural language questions with three retrieval modes:
    - **Dual** (default) — merges knowledge graph traversal + vector similarity, deduplicates by node ID, and synthesizes a response from both sources
@@ -35,17 +35,27 @@ export GCS_CREDENTIALS_JSON='{"type":"service_account","project_id":"...","priva
 
 ## Getting Started
 
-### Infrastructure + Worker
+### Docker Compose (full stack)
+
+```bash
+# Start everything — databases, worker, API, and UI
+docker compose --profile all up -d
+```
+
+This builds and runs all services:
+- API at http://localhost:8000
+- UI at http://localhost:5173
+- Neo4j, PostgreSQL (pgvector), Redis, Celery worker + beat
+
+To start only the databases, worker, and beat scheduler:
 
 ```bash
 docker compose up -d
 ```
 
-Starts Neo4j, PostgreSQL (with pgvector), Redis, the Celery worker, and the Celery beat scheduler.
+### Local development
 
-For Kubernetes deployment, see [infra/README.md](infra/README.md).
-
-### Backend
+#### Backend
 
 ```bash
 cd services/query-engine
@@ -54,7 +64,7 @@ poetry install
 poetry run uvicorn app.main:create_app --factory --reload
 ```
 
-### UI
+#### UI
 
 ```bash
 cd ui
@@ -65,21 +75,6 @@ pnpm dev  # port 5173
 The UI provides a query page for asking questions about your documents and an upload page with drag-and-drop file upload and interactive Cytoscape.js knowledge graph visualization per document.
 
 ## Architecture
-
-```
-┌─────────────┐     ┌──────────────────┐     ┌─────────┐
-│   Vue 3 UI  │────>│  FastAPI Backend  │────>│  Neo4j  │
-└─────────────┘     └──────┬───────────┘     └─────────┘
-                           │                  ┌──────────┐
-                           ├─────────────────>│ pgvector │
-                           │                  └──────────┘
-                    ┌──────┴───────┐          ┌─────────┐
-                    │ Celery Worker│────>─────>│   GCS   │
-                    └──────┬───────┘          └─────────┘
-                           │                  ┌─────────┐
-                           └─────────────────>│  Redis  │
-                                              └─────────┘
-```
 
 - **FastAPI** — API server with rate limiting, request tracing, Prometheus metrics
 - **Celery Worker** — async document ingestion (chunking, embedding, triplet extraction) and deletion (precise removal using `source_node_ids` provenance)
@@ -94,7 +89,6 @@ The UI provides a query page for asking questions about your documents and an up
 ```
 services/query-engine/   Python, FastAPI, LlamaIndex, Celery, Poetry
 ui/                      Vue 3, TypeScript, Vite, Tailwind CSS, Cytoscape.js
-infra/                   Helm charts, deploy scripts, K8s manifests
 docker-compose.yml       Neo4j, PostgreSQL, Redis, Celery worker + beat (local dev)
 .github/workflows/       CI: API tests, API build, UI build
 ```

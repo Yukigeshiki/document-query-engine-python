@@ -51,12 +51,42 @@ services:
 
   beat:
     build: ./services/query-engine
-    command: celery -A app.worker.celery_app:celery_app beat --loglevel=info
+    command: celery -A app.worker.celery_app:celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
     env_file: ./services/query-engine/.env
     environment:
       CELERY_BROKER_URL: redis://redis:6379/0
     depends_on:
       - redis
+
+  api:
+    profiles: [all]
+    build: ./services/query-engine
+    ports:
+      - "8000:8000"
+    env_file: ./services/query-engine/.env
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      GCS_CREDENTIALS_JSON: ${GCS_CREDENTIALS_JSON}
+      POSTGRES_URI: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-query_engine}
+      CELERY_BROKER_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      neo4j:
+        condition: service_started
+
+  ui:
+    profiles: [all]
+    build: ./ui
+    ports:
+      - "5173:8080"
+    environment:
+      API_URL: http://api:8000
+    depends_on:
+      - api
 
 volumes:
   neo4j_data:
