@@ -37,7 +37,6 @@ class Settings(BaseSettings):
     neo4j_username: str = ""
     neo4j_password: str = ""
     neo4j_database: str = ""
-    neo4j_enabled: bool = True
 
     # PostgreSQL / pgvector
     postgres_uri: str = ""

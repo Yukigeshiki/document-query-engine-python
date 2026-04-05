@@ -19,8 +19,6 @@ from llama_index.core import (
     VectorStoreIndex,
     load_index_from_storage,
 )
-from llama_index.core.graph_stores.simple import SimpleGraphStore
-from llama_index.core.graph_stores.types import GraphStore
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.core.schema import MetadataMode
@@ -74,7 +72,7 @@ VECTOR_INDEX_ID = "vector_index"
 
 
 class KnowledgeGraphService:
-    """Manages KG and vector indexes with Neo4j, PostgreSQL, or in-memory stores."""
+    """Manages KG and vector indexes with Neo4j and PostgreSQL."""
 
     def __init__(
         self,
@@ -107,9 +105,8 @@ class KnowledgeGraphService:
         )
         Settings.chunk_size = config.chunk_size
 
-        self._neo4j_enabled = config.neo4j_enabled
         self._postgres_enabled = config.postgres_enabled
-        self._graph_store: GraphStore = self._create_graph_store(config)
+        self._graph_store = self._create_graph_store(config)
         self._storage_context = self._create_storage_context(config)
         self._max_triplets = config.max_triplets_per_chunk
         self._vector_top_k = config.vector_top_k
@@ -119,31 +116,25 @@ class KnowledgeGraphService:
 
         logger.info(
             "knowledge_graph_service_initialized",
-            graph_backend="neo4j" if self._neo4j_enabled else "in_memory",
+            graph_backend="neo4j",
             vector_backend="pgvector" if self._postgres_enabled else "in_memory",
         )
 
-    def _create_graph_store(self, config: AppSettings) -> GraphStore:
-        """Create the appropriate graph store based on configuration."""
-        if not config.neo4j_enabled:
-            return SimpleGraphStore()
+    @staticmethod
+    def _create_graph_store(config: AppSettings) -> Neo4jGraphStore:
+        """
+        Create the Neo4j graph store.
 
-        try:
-            store = Neo4jGraphStore(
-                username=config.neo4j_username,
-                password=config.neo4j_password,
-                url=config.neo4j_uri,
-                database=config.neo4j_database,
-            )
-            logger.info("neo4j_connected", uri=config.neo4j_uri)
-            return store
-        except Exception as exc:
-            logger.warning(
-                "neo4j_connection_failed_falling_back_to_in_memory",
-                error=str(exc),
-            )
-            self._neo4j_enabled = False
-            return SimpleGraphStore()
+        Raises on connection failure — Neo4j is required.
+        """
+        store = Neo4jGraphStore(
+            username=config.neo4j_username,
+            password=config.neo4j_password,
+            url=config.neo4j_uri,
+            database=config.neo4j_database,
+        )
+        logger.info("neo4j_connected", uri=config.neo4j_uri)
+        return store
 
     def _create_storage_context(self, config: AppSettings) -> StorageContext:
         """Create a StorageContext with optional PostgreSQL persistence."""
@@ -261,19 +252,15 @@ class KnowledgeGraphService:
             logger.warning("kg_index_reload_failed")
 
     def _count_triplets(self) -> int:
-        """Count the number of triplets in the graph store."""
-        if self._neo4j_enabled:
-            try:
-                result = self._neo4j_store.query(
-                    "MATCH ()-[r]->() RETURN count(r) AS cnt"
-                )
-                return int(result[0]["cnt"]) if result else 0
-            except Exception as exc:
-                logger.warning("triplet_count_failed", error=str(exc))
-                return -1
-        return sum(
-            len(rels) for rels in self._graph_store.get_rel_map().values()
-        )
+        """Count the number of triplets in Neo4j."""
+        try:
+            result = self._graph_store.query(
+                "MATCH ()-[r]->() RETURN count(r) AS cnt"
+            )
+            return int(result[0]["cnt"]) if result else 0
+        except Exception as exc:
+            logger.warning("triplet_count_failed", error=str(exc))
+            return -1
 
     def _upsert_triplet_with_source(
         self, subj: str, rel: str, obj: str, source_node_id: str
@@ -281,51 +268,31 @@ class KnowledgeGraphService:
         """
         Upsert a triplet and track which node produced it.
 
-        On Neo4j, stores a `source_node_ids` list property on the
+        Stores a `source_node_ids` list property on the Neo4j
         relationship so deletion can precisely target the right edges.
-        On SimpleGraphStore (in-memory fallback), delegates to the
-        plain upsert — no source tracking available.
         """
-        if self._neo4j_enabled:
-            rel_type = rel.replace(" ", "_").upper()
-            label = self._neo4j_store.node_label
-            cypher = (
-                f"MERGE (n1:`{label}` {{id: $subj}}) "
-                f"MERGE (n2:`{label}` {{id: $obj}}) "
-                f"MERGE (n1)-[r:`{rel_type}`]->(n2) "
-                "ON CREATE SET r.source_node_ids = [$source_node_id] "
-                "ON MATCH SET r.source_node_ids = CASE "
-                "  WHEN $source_node_id IN r.source_node_ids "
-                "    THEN r.source_node_ids "
-                "  ELSE r.source_node_ids + $source_node_id "
-                "END"
-            )
-            self._neo4j_store.query(
-                cypher,
-                {"subj": subj, "obj": obj, "source_node_id": source_node_id},
-            )
-        else:
-            self._graph_store.upsert_triplet(subj, rel, obj)
-
-    @property
-    def _neo4j_store(self) -> Neo4jGraphStore:
-        """Access the graph store as Neo4jGraphStore."""
-        if not isinstance(self._graph_store, Neo4jGraphStore):
-            raise TypeError("Graph store is not Neo4jGraphStore")
-        return self._graph_store
-
-    @property
-    def _simple_store(self) -> SimpleGraphStore:
-        """Access the graph store as SimpleGraphStore."""
-        if not isinstance(self._graph_store, SimpleGraphStore):
-            raise TypeError("Graph store is not SimpleGraphStore")
-        return self._graph_store
+        rel_type = rel.replace(" ", "_").upper()
+        label = self._graph_store.node_label
+        cypher = (
+            f"MERGE (n1:`{label}` {{id: $subj}}) "
+            f"MERGE (n2:`{label}` {{id: $obj}}) "
+            f"MERGE (n1)-[r:`{rel_type}`]->(n2) "
+            "ON CREATE SET r.source_node_ids = [$source_node_id] "
+            "ON MATCH SET r.source_node_ids = CASE "
+            "  WHEN $source_node_id IN r.source_node_ids "
+            "    THEN r.source_node_ids "
+            "  ELSE r.source_node_ids + $source_node_id "
+            "END"
+        )
+        self._graph_store.query(
+            cypher,
+            {"subj": subj, "obj": obj, "source_node_id": source_node_id},
+        )
 
     def close(self) -> None:
-        """Close Neo4j connection if active."""
-        if self._neo4j_enabled:
-            self._neo4j_store.close()
-            logger.info("neo4j_connection_closed")
+        """Close Neo4j connection."""
+        self._graph_store.close()
+        logger.info("neo4j_connection_closed")
 
     async def check_graph_store_health(self) -> dict[str, str]:
         """
@@ -333,15 +300,11 @@ class KnowledgeGraphService:
 
         Returns a dict with status, backend, and optional error.
         """
-        if not self._neo4j_enabled:
-            kg_graph_store_up.set(1)
-            return {"status": "ok", "backend": "in_memory"}
-
         loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(
                 None,
-                partial(self._neo4j_store.query, "RETURN 1"),
+                partial(self._graph_store.query, "RETURN 1"),
             )
             kg_graph_store_up.set(1)
             return {"status": "ok", "backend": "neo4j"}
@@ -442,7 +405,7 @@ class KnowledgeGraphService:
         Orphaned Entity nodes are cleaned up at the end.
         """
         node_id_list = list(node_ids)
-        label = self._neo4j_store.node_label
+        label = self._graph_store.node_label
 
         # Determine which entities our document contributed
         our_entities: set[str] = set()
@@ -460,7 +423,7 @@ class KnowledgeGraphService:
 
         # Step 1: Remove our node_ids from relationship provenance.
         # Delete the relationship entirely when no source_node_ids remain.
-        self._neo4j_store.query(
+        self._graph_store.query(
             "MATCH ()-[r]->() "
             "WHERE ANY(nid IN r.source_node_ids WHERE nid IN $node_ids) "
             "SET r.source_node_ids = "
@@ -472,7 +435,7 @@ class KnowledgeGraphService:
 
         # Step 2: Clean up orphaned Entity nodes (no remaining edges).
         if entity_list:
-            self._neo4j_store.query(
+            self._graph_store.query(
                 f"MATCH (n:`{label}`) "
                 "WHERE n.id IN $entities AND NOT (n)--() "
                 "DELETE n",
@@ -480,61 +443,6 @@ class KnowledgeGraphService:
             )
 
         # Step 4: Update the index struct.
-        for entity, remove_entirely in entity_actions.items():
-            if remove_entirely:
-                del index_struct.table[entity]
-            else:
-                index_struct.table[entity] -= node_ids
-
-        self._storage_context.index_store.add_index_struct(index_struct)
-
-    def _delete_simple_store_heuristic(
-        self,
-        node_ids: set[str],
-        index_struct: Any,
-    ) -> None:
-        """
-        Delete triplets from SimpleGraphStore using entity-pair heuristic.
-
-        Since SimpleGraphStore cannot store source metadata on triplets,
-        we use the best-effort approach: delete triplets where both
-        endpoints share a common source node from the deleted document,
-        and fully clean up orphaned entities.
-        """
-        entity_to_our_nodes: dict[str, set[str]] = {}
-        for entity, node_id_set in index_struct.table.items():
-            overlap = node_id_set.intersection(node_ids)
-            if overlap:
-                entity_to_our_nodes[entity] = overlap
-
-        our_entities = set(entity_to_our_nodes.keys())
-        entity_actions: dict[str, bool] = {
-            entity: (index_struct.table[entity] - node_ids) == set()
-            for entity in our_entities
-        }
-
-        # Delete triplets where both endpoints share a common source node
-        for entity in our_entities:
-            for rel, obj in list(self._graph_store.get(entity)):
-                if obj not in our_entities:
-                    continue
-                common = entity_to_our_nodes[entity] & entity_to_our_nodes.get(obj, set())
-                if common:
-                    self._graph_store.delete(entity, rel, obj)
-
-        # Fully-orphaned entities: delete all remaining triplets
-        for entity, remove_entirely in entity_actions.items():
-            if not remove_entirely:
-                continue
-            for rel, obj in list(self._graph_store.get(entity)):
-                self._graph_store.delete(entity, rel, obj)
-            # Inbound: scan all relationships for ones targeting this entity
-            for subj, rels in self._graph_store.get_rel_map().items():
-                for _, rel, obj in rels:
-                    if obj == entity:
-                        self._graph_store.delete(subj, rel, obj)
-
-        # Update the index struct
         for entity, remove_entirely in entity_actions.items():
             if remove_entirely:
                 del index_struct.table[entity]
@@ -587,14 +495,9 @@ class KnowledgeGraphService:
 
             # 1. Clean up KG graph store + index struct.
             #    KnowledgeGraphIndex._delete_node raises NotImplementedError,
-            #    so we handle this manually.  Neo4j uses source_node_ids
-            #    provenance for precise deletion; SimpleGraphStore falls
-            #    back to the entity-pair heuristic.
+            #    so we handle this manually using source_node_ids provenance.
             index_struct = self._index.index_struct
-            if self._neo4j_enabled:
-                self._delete_neo4j_provenance(all_node_ids, index_struct)
-            else:
-                self._delete_simple_store_heuristic(all_node_ids, index_struct)
+            self._delete_neo4j_provenance(all_node_ids, index_struct)
 
             # 2. Delete from vector index (pgvector) — idempotent
             for ref_doc_id in all_doc_ids:
@@ -891,10 +794,6 @@ class KnowledgeGraphService:
         Returns a tuple of (nodes, edges).
         Raises ServiceUnavailableError if Neo4j is not enabled.
         """
-        if not self._neo4j_enabled:
-            raise ServiceUnavailableError(
-                detail="Subgraph queries require Neo4j backend"
-            )
 
         cypher = (
             f"MATCH path = (start)-[*1..{depth}]-(connected) "
@@ -912,7 +811,7 @@ class KnowledgeGraphService:
             records: list[dict[str, Any]] = await loop.run_in_executor(
                 None,
                 partial(
-                    self._neo4j_store.query,
+                    self._graph_store.query,
                     cypher,
                     {"entity": entity},
                 ),
@@ -948,10 +847,6 @@ class KnowledgeGraphService:
         Finds all entities associated with the documents' nodes
         and fetches their relationships from Neo4j.
         """
-        if not self._neo4j_enabled:
-            raise ServiceUnavailableError(
-                detail="Graph queries require Neo4j backend"
-            )
 
         loop = asyncio.get_running_loop()
 
@@ -1011,7 +906,7 @@ class KnowledgeGraphService:
                 "type(rel) AS relation, "
                 "tgt.id AS target_id, labels(tgt) AS target_labels"
             )
-            records = self._neo4j_store.query(cypher, {"entities": entity_list})
+            records = self._graph_store.query(cypher, {"entities": entity_list})
 
             return self._records_to_graph(records)
 

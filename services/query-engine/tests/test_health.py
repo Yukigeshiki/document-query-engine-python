@@ -23,7 +23,7 @@ async def test_health_check(client: AsyncClient) -> None:
 async def test_health_check_with_graph_store() -> None:
     """Verify health endpoint includes graph store component health."""
     mock_service = AsyncMock()
-    mock_service.check_graph_store_health.return_value = {"status": "ok", "backend": "in_memory"}
+    mock_service.check_graph_store_health.return_value = {"status": "ok", "backend": "neo4j"}
     mock_service.check_vector_store_health.return_value = None
     mock_service.check_cache_health.return_value = None
 
@@ -40,7 +40,7 @@ async def test_health_check_with_graph_store() -> None:
     data = response.json()
     assert data["status"] == "ok"
     assert data["components"]["graph_store"]["status"] == "ok"
-    assert data["components"]["graph_store"]["backend"] == "in_memory"
+    assert data["components"]["graph_store"]["backend"] == "neo4j"
 
 
 @pytest.mark.asyncio

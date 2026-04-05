@@ -55,7 +55,7 @@ def mock_kg_service() -> AsyncMock:
         ],
         2,
     )
-    service.check_graph_store_health.return_value = {"status": "ok", "backend": "in_memory"}
+    service.check_graph_store_health.return_value = {"status": "ok", "backend": "neo4j"}
     return service
 
 
