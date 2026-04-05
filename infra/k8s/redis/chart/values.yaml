@@ -1,2 +1,0 @@
-image: redis:7-alpine
-storage: 1Gi

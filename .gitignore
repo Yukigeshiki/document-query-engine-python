@@ -15,3 +15,8 @@
 
 /reviews
 PROJECT-INFO.md
+
+# Infrastructure & Helm charts
+/infra/
+/services/query-engine/chart/
+/ui/chart/
