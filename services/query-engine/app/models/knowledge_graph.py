@@ -42,22 +42,6 @@ class QueryRequest(CamelModel):
     retrieval_mode: RetrievalMode = Field(default=RetrievalMode.DUAL)
 
 
-class IngestRequest(CamelModel):
-    """Request body for document ingestion."""
-
-    text: str = Field(..., min_length=1, description="Document text to ingest")
-    metadata: dict[str, Any] | None = Field(
-        default=None, description="Optional metadata key-value pairs"
-    )
-
-
-class IngestResponse(CamelModel):
-    """Response after successful document ingestion."""
-
-    document_id: str
-    triplet_count: int
-
-
 class SourceIngestRequest(CamelModel):
     """Request body for bulk document ingestion from a source."""
 

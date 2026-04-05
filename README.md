@@ -1,8 +1,8 @@
-# Agent Query Engine
+# Document Query Engine
 
-[![API Tests](https://github.com/Yukigeshiki/agent-query-engine-python/actions/workflows/api-tests.yml/badge.svg)](https://github.com/Yukigeshiki/agent-query-engine-python/actions/workflows/api-tests.yml)
-[![API Build](https://github.com/Yukigeshiki/agent-query-engine-python/actions/workflows/api-build.yml/badge.svg)](https://github.com/Yukigeshiki/agent-query-engine-python/actions/workflows/api-build.yml)
-[![UI Build](https://github.com/Yukigeshiki/agent-query-engine-python/actions/workflows/ui-build.yml/badge.svg)](https://github.com/Yukigeshiki/agent-query-engine-python/actions/workflows/ui-build.yml)
+[![API Tests](https://github.com/Yukigeshiki/document-query-engine-python/actions/workflows/api-tests.yml/badge.svg)](https://github.com/Yukigeshiki/document-query-engine-python/actions/workflows/api-tests.yml)
+[![API Build](https://github.com/Yukigeshiki/document-query-engine-python/actions/workflows/api-build.yml/badge.svg)](https://github.com/Yukigeshiki/document-query-engine-python/actions/workflows/api-build.yml)
+[![UI Build](https://github.com/Yukigeshiki/document-query-engine-python/actions/workflows/ui-build.yml/badge.svg)](https://github.com/Yukigeshiki/document-query-engine-python/actions/workflows/ui-build.yml)
 
 A document ingestion and query engine built with Python/FastAPI, LlamaIndex, Neo4j, and pgvector. Upload documents (PDF, DOCX, TXT — max 5MB), extract knowledge graph triplets and vector embeddings, then query across both using natural language. LlamaIndex orchestrates the full pipeline — chunking documents, extracting entity-relationship triplets via OpenAI into Neo4j, embedding chunks into pgvector, and synthesizing answers from dual retrieval (graph traversal + vector similarity). Documents are stored in GCS and processed asynchronously via Celery. The UI provides testing for document upload with interactive graph visualization, a query interface with retrieval mode selection, and document deletion.
 
@@ -18,7 +18,7 @@ A document ingestion and query engine built with Python/FastAPI, LlamaIndex, Neo
 
 ## Prerequisites
 
-- Python 3.13+ and [Poetry](https://python-poetry.org/)
+- Python 3.12+ and [Poetry](https://python-poetry.org/)
 - Docker
 - Node.js + pnpm
 - `OPENAI_API_KEY` environment variable
@@ -124,12 +124,14 @@ curl -X POST http://localhost:8000/api/v1/kg/ingest/upload \
 |--------|------|-------------|
 | POST | `/kg/query` | Query documents with natural language |
 | POST | `/kg/ingest/upload` | Upload a file for async ingestion (max 5MB) |
+| POST | `/kg/ingest/source` | Ingest from a source connector (async) |
 | GET | `/kg/documents` | List ingested documents (paginated, newest first) |
 | DELETE | `/kg/documents/{docId}` | Delete a document from all storage layers |
 | GET | `/kg/documents/graph` | Get knowledge graph for a document |
 | GET | `/kg/subgraph` | Get subgraph around an entity |
 | GET | `/tasks/{taskId}` | Poll background task status |
-| GET | `/api/v1/health` | Health check |
+| DELETE | `/tasks/{taskId}` | Cancel a background task |
+| GET | `/health` | Health check |
 | GET | `/metrics` | Prometheus metrics |
 
 ## Build Commands

@@ -23,7 +23,6 @@ from app.models.knowledge_graph import (
 def mock_kg_service() -> AsyncMock:
     """Create a mock KnowledgeGraphService."""
     service = AsyncMock()
-    service.ingest.return_value = ("test-doc-id", 5)
     service.query.return_value = (
         "Test response about the topic.",
         [SourceNodeInfo(source_type=SourceRetrievalType.VECTOR, score=0.9, metadata=SourceNodeMetadata(file_name="test.txt"))],
@@ -69,34 +68,6 @@ async def kg_client(mock_kg_service: AsyncMock) -> AsyncIterator[AsyncClient]:
         base_url="http://test",
     ) as ac:
         yield ac
-
-
-@pytest.mark.asyncio
-async def test_ingest_document(kg_client: AsyncClient, mock_kg_service: AsyncMock) -> None:
-    """Verify ingest endpoint returns document ID and triplet count."""
-    response = await kg_client.post(
-        "/api/v1/kg/ingest",
-        json={"text": "Alice works at Acme Corp in New York."},
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["documentId"] == "test-doc-id"
-    assert data["tripletCount"] == 5
-    mock_kg_service.ingest.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_ingest_with_metadata(kg_client: AsyncClient, mock_kg_service: AsyncMock) -> None:
-    """Verify ingest accepts optional metadata."""
-    response = await kg_client.post(
-        "/api/v1/kg/ingest",
-        json={"text": "Some document.", "metadata": {"source": "test"}},
-    )
-    assert response.status_code == 200
-    mock_kg_service.ingest.assert_called_once_with(
-        text="Some document.",
-        metadata={"source": "test"},
-    )
 
 
 @pytest.mark.asyncio
@@ -195,16 +166,6 @@ async def test_document_graph(kg_client: AsyncClient, mock_kg_service: AsyncMock
 async def test_document_graph_missing_doc_ids(kg_client: AsyncClient) -> None:
     """Verify document graph rejects missing doc_ids."""
     response = await kg_client.get("/api/v1/kg/documents/graph")
-    assert response.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_ingest_empty_text(kg_client: AsyncClient) -> None:
-    """Verify validation rejects empty text."""
-    response = await kg_client.post(
-        "/api/v1/kg/ingest",
-        json={"text": ""},
-    )
     assert response.status_code == 422
 
 

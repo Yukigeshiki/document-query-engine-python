@@ -10,8 +10,6 @@ from app.dependencies import get_kg_service, get_upload_service
 from app.models.knowledge_graph import (
     DocumentInfo,
     DocumentListResponse,
-    IngestRequest,
-    IngestResponse,
     QueryRequest,
     QueryResponse,
     SourceIngestRequest,
@@ -68,21 +66,6 @@ async def delete_document(
             detail=f"Failed to submit deletion task: {exc}"
         ) from exc
     return TaskAcceptedResponse(task_id=result.id)
-
-
-@router.post("/ingest", response_model=IngestResponse)
-@limiter.limit(settings.rate_limit_ingest)
-async def ingest_document(
-    request: Request,
-    body: IngestRequest,
-    service: KnowledgeGraphService = Depends(get_kg_service),
-) -> IngestResponse:
-    """Ingest a text document into the knowledge graph."""
-    doc_id, triplet_count = await service.ingest(
-        text=body.text,
-        metadata=body.metadata,
-    )
-    return IngestResponse(document_id=doc_id, triplet_count=triplet_count)
 
 
 @router.post(
