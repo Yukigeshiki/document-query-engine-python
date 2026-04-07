@@ -20,8 +20,8 @@ from app.worker.celery_app import celery_app
 
 logger = structlog.stdlib.get_logger(__name__)
 
-# NOTE: This lazy singleton is safe because worker_concurrency=1 in celery_app.py.
-# If concurrency is ever increased, this must be replaced with thread-safe init.
+# Lazy per-process singleton. Safe under Celery's prefork pool because each
+# worker process has its own copy of this global.
 _kg_service: KnowledgeGraphService | None = None
 
 
@@ -88,11 +88,28 @@ def delete_document_task(doc_id: str) -> dict[str, Any]:
     """
     Background task: delete a document from all storage layers.
 
-    Retries automatically on failure to avoid orphaned records across
-    Neo4j, pgvector, and PostgreSQL docstore.
+    Retries automatically on transient failures to avoid orphaned records
+    across Neo4j, pgvector, and PostgreSQL docstore.
+
+    Idempotency: with task_acks_late enabled, a worker crash after the
+    deletion completes but before the broker ACK is sent will redeliver
+    this task. On the second run the document is already gone and the
+    service raises NotFoundError. We catch it here and report success
+    with an empty deleted_doc_ids list — the post-condition ("document
+    is gone") holds either way, and DELETE semantics are conventionally
+    idempotent. Callers can distinguish "actually deleted now" from
+    "already gone" by inspecting the deleted_doc_ids field.
     """
     kg_service = _get_kg_service()
-    deleted_ids = asyncio.run(kg_service.delete_document(doc_id=doc_id))
+    try:
+        deleted_ids = asyncio.run(kg_service.delete_document(doc_id=doc_id))
+    except NotFoundError:
+        logger.info("delete_already_completed", doc_id=doc_id)
+        return {
+            "task_type": "delete_document",
+            "doc_id": doc_id,
+            "deleted_doc_ids": [],
+        }
 
     return {
         "task_type": "delete_document",

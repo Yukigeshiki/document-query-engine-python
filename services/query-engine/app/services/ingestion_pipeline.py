@@ -1,6 +1,7 @@
 """Ingestion pipeline: connects document connectors to the KG service."""
 
 import asyncio
+import hashlib
 from typing import Any
 
 import structlog
@@ -49,9 +50,27 @@ class IngestionPipeline:
 
         for doc in documents:
             try:
+                content = doc.get_content()
+                # Derive a stable source identifier so the KG service can
+                # produce a deterministic doc_id. This makes the task safe
+                # to retry: a Celery redelivery (worker crash, OOM, time
+                # limit) re-runs with the same source_id, which hashes to
+                # the same doc_id, and the storage layers replace prior
+                # state instead of creating duplicates.
+                # The content hash is included so an in-place file
+                # replacement (same path, new content) is treated as a
+                # different document, not a stale duplicate.
+                source_path = (
+                    doc.metadata.get("source_path")
+                    or doc.metadata.get("file_name")
+                    or "unknown"
+                )
+                content_hash = hashlib.sha256(content.encode()).hexdigest()
+                source_id = f"{source_type.value}:{source_path}:{content_hash}"
                 _doc_id, triplets = await self._kg_service.ingest(
-                    text=doc.get_content(),
+                    text=content,
                     metadata=doc.metadata,
+                    source_id=source_id,
                 )
                 total_triplets += triplets
                 ingested_count += 1

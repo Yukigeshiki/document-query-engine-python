@@ -188,8 +188,10 @@ async def test_subgraph_missing_entity(kg_client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_delete_document_accepted(kg_client: AsyncClient, mock_kg_service: AsyncMock) -> None:
-    """Verify delete endpoint returns 202 with a task ID."""
+    """Verify delete endpoint returns 202 with a task ID when the doc exists."""
     from unittest.mock import patch, MagicMock
+
+    mock_kg_service.document_exists.return_value = True
 
     mock_result = MagicMock()
     mock_result.id = "task-delete-1"
@@ -201,3 +203,26 @@ async def test_delete_document_accepted(kg_client: AsyncClient, mock_kg_service:
     data = response.json()
     assert data["taskId"] == "task-delete-1"
     mock_task.delay.assert_called_once_with(doc_id="doc-1")
+    mock_kg_service.document_exists.assert_called_once_with("doc-1")
+
+
+@pytest.mark.asyncio
+async def test_delete_document_returns_404_for_unknown_id(
+    kg_client: AsyncClient, mock_kg_service: AsyncMock
+) -> None:
+    """Verify a typoed doc_id returns 404 synchronously without dispatching a task.
+
+    Without this synchronous validation, the user would have to poll the task
+    status endpoint to learn that the doc didn't exist, and the worker-side
+    NotFoundError catch (P2 idempotency fix) would silently report success.
+    """
+    from unittest.mock import patch
+
+    mock_kg_service.document_exists.return_value = False
+
+    with patch("app.api.v1.knowledge_graph.delete_document_task") as mock_task:
+        response = await kg_client.delete("/api/v1/kg/documents/bogus-id")
+
+    assert response.status_code == 404
+    mock_kg_service.document_exists.assert_called_once_with("bogus-id")
+    mock_task.delay.assert_not_called()

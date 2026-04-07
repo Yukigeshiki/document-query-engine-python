@@ -59,6 +59,8 @@ class Settings(BaseSettings):
 
     # Celery
     celery_broker_url: str = ""
+    celery_worker_concurrency: int = 4
+    worker_max_tasks_per_child: int = 100
 
 
 settings = Settings()

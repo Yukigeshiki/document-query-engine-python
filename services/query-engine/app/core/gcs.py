@@ -1,15 +1,15 @@
 """Singleton GCS client factory."""
 
 import json
+from typing import Any
 
 from google.cloud import storage as gcs_storage  # type: ignore[import-untyped]
 
 from app.core.config import Settings
 
-# NOTE: This lazy singleton is safe because the API server is single-threaded
-# async and the Celery worker runs with concurrency=1. If worker concurrency
-# is ever increased, this must be replaced with thread-safe init.
-_client: gcs_storage.Client | None = None
+# Lazy per-process singleton. Safe under FastAPI (single-threaded async) and
+# Celery's prefork pool (each worker process has its own copy of this global).
+_client: Any = None
 
 
 def get_gcs_client(config: Settings) -> gcs_storage.Client:

@@ -2,9 +2,8 @@
 
 from sqlalchemy import Engine, create_engine
 
-# NOTE: This lazy singleton is safe because the API server is single-threaded
-# async and the Celery worker runs with concurrency=1. If worker concurrency
-# is ever increased, this must be replaced with thread-safe init.
+# Lazy per-process singleton. Safe under FastAPI (single-threaded async) and
+# Celery's prefork pool (each worker process has its own copy of this global).
 _engine: Engine | None = None
 
 

@@ -111,3 +111,82 @@ async def test_pipeline_unknown_source_type(
     pipeline = IngestionPipeline(kg_service=mock_kg_service)
     with pytest.raises(BadRequestError, match="Unknown source type"):
         await pipeline.run(SourceType.GCS, {})
+
+
+@pytest.mark.asyncio
+@patch("app.services.ingestion_pipeline.default_registry")
+async def test_pipeline_passes_stable_source_id_on_retry(
+    mock_registry: MagicMock,
+    mock_kg_service: AsyncMock,
+) -> None:
+    """Verify pipeline derives a deterministic source_id from each document.
+
+    Running the pipeline twice over the same set of documents must produce
+    the same source_id values both times — this is what makes the underlying
+    Celery task safe to retry. The doc_id derived from this source_id is the
+    sole guard against duplicates in the storage layers.
+    """
+    def make_connector() -> MagicMock:
+        connector = MagicMock()
+        connector.load_documents.return_value = iter([
+            Document(
+                text="content of doc one",
+                metadata={"source_path": "gs://bucket/uploads/abc/doc1.txt"},
+            ),
+            Document(
+                text="content of doc two",
+                metadata={"source_path": "gs://bucket/uploads/abc/doc2.txt"},
+            ),
+        ])
+        return connector
+
+    mock_registry.get.side_effect = lambda _source_type: make_connector()
+
+    pipeline = IngestionPipeline(kg_service=mock_kg_service)
+
+    # First run
+    await pipeline.run(SourceType.GCS, {"bucket": "bucket", "prefix": "uploads/abc/"})
+    first_source_ids = [
+        call.kwargs["source_id"]
+        for call in mock_kg_service.ingest.call_args_list
+    ]
+
+    # Reset call history for the second run
+    mock_kg_service.ingest.reset_mock()
+
+    # Second run (simulates Celery retry)
+    await pipeline.run(SourceType.GCS, {"bucket": "bucket", "prefix": "uploads/abc/"})
+    second_source_ids = [
+        call.kwargs["source_id"]
+        for call in mock_kg_service.ingest.call_args_list
+    ]
+
+    # The source_ids must be identical across runs
+    assert first_source_ids == second_source_ids
+    assert len(first_source_ids) == 2
+
+    # Each source_id has the expected shape: {source_type}:{source_path}:{content_hash}
+    for source_id in first_source_ids:
+        assert source_id.startswith(f"{SourceType.GCS.value}:gs://bucket/uploads/abc/")
+        # The trailing 64 chars are the sha256 content hash hex digest
+        assert len(source_id.rsplit(":", 1)[-1]) == 64
+
+
+@pytest.mark.asyncio
+@patch("app.services.ingestion_pipeline.default_registry")
+async def test_pipeline_source_id_falls_back_to_file_name(
+    mock_registry: MagicMock,
+    mock_kg_service: AsyncMock,
+) -> None:
+    """Verify pipeline falls back to file_name when source_path is missing."""
+    connector = MagicMock()
+    connector.load_documents.return_value = iter([
+        Document(text="content", metadata={"file_name": "report.pdf"}),
+    ])
+    mock_registry.get.return_value = connector
+
+    pipeline = IngestionPipeline(kg_service=mock_kg_service)
+    await pipeline.run(SourceType.GCS, {})
+
+    source_id = mock_kg_service.ingest.call_args.kwargs["source_id"]
+    assert "report.pdf" in source_id

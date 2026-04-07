@@ -1,5 +1,6 @@
 """Google Cloud Storage document connector."""
 
+import os
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -76,6 +77,20 @@ class GCSConnector(BaseConnector):
                 )
 
                 documents = reader.load_data()
+
+                # Attach a stable, fully qualified source path so downstream
+                # consumers can derive deterministic doc_ids that survive task
+                # retries and process restarts. SimpleDirectoryReader sets
+                # metadata["file_path"] to the absolute temp-dir path, which
+                # is not stable across runs — strip the temp prefix to get
+                # the GCS-relative blob name.
+                for doc in documents:
+                    abs_path = doc.metadata.get("file_path", "") if doc.metadata else ""
+                    if abs_path:
+                        rel_path = os.path.relpath(abs_path, str(tmp_path))
+                        doc.metadata["source_path"] = f"gs://{bucket_name}/{rel_path}"
+                    else:
+                        doc.metadata["source_path"] = f"gs://{bucket_name}/{prefix}"
 
                 logger.info(
                     "gcs_documents_loaded",

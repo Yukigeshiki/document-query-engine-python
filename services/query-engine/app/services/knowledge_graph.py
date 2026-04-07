@@ -3,7 +3,6 @@
 import asyncio
 import hashlib
 import time
-import uuid
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any
@@ -344,6 +343,22 @@ class KnowledgeGraphService:
         kg_cache_up.set(1 if result.get("status") == "ok" else 0)
         return result
 
+    async def document_exists(self, doc_id: str) -> bool:
+        """Return True if a document with this doc_id exists in the docstore.
+
+        Cheap key lookup (single docstore query) used by the delete endpoint
+        to validate input synchronously, so a typoed doc_id returns 404
+        immediately instead of dispatching a background task that would
+        eventually report failure.
+        """
+        loop = asyncio.get_running_loop()
+
+        def _check() -> bool:
+            info = self._storage_context.docstore.get_ref_doc_info(doc_id)
+            return info is not None
+
+        return await loop.run_in_executor(None, _check)
+
     async def list_documents(
         self,
         limit: int = 20,
@@ -536,14 +551,22 @@ class KnowledgeGraphService:
     async def ingest(
         self,
         text: str,
+        source_id: str,
         metadata: dict[str, Any] | None = None,
     ) -> tuple[str, int]:
         """
         Ingest a document into both KG and vector indexes.
 
+        `source_id` must be a stable identifier for this document (e.g.
+        derived from the source path and content hash). The resulting
+        `doc_id` is `sha256(source_id)`, which makes the call idempotent —
+        re-running with the same source_id replaces any prior vector-store
+        state for that document instead of creating duplicates. This makes
+        the ingest path safe to retry after a Celery worker crash.
+
         Returns a tuple of (document_id, triplet_count).
         """
-        doc_id = str(uuid.uuid4())
+        doc_id = hashlib.sha256(source_id.encode()).hexdigest()
         # Store all metadata in the docstore (for grouping, display, etc.)
         # but exclude everything from LLM triplet extraction so it doesn't
         # pollute the knowledge graph.
@@ -580,6 +603,23 @@ class KnowledgeGraphService:
                 # the knowledge graph. Metadata is still stored in the docstore.
                 for node in nodes:
                     node.excluded_llm_metadata_keys = list(node.metadata.keys())
+
+                # Idempotency guard: PGVectorStore.add() does NOT enforce
+                # uniqueness on node_id, so a Celery retry of an ingest
+                # would otherwise accumulate duplicate vector rows.
+                # Explicitly purge any prior rows for this doc_id before
+                # re-inserting. Safe no-op on the first run. Neo4j MERGE and
+                # the postgres docstore (`allow_update=True`) handle their
+                # own dedupe; the vector store is the only layer that needs
+                # this.
+                try:
+                    self._vector_index.vector_store.delete(ref_doc_id=doc_id)
+                except Exception as exc:
+                    logger.warning(
+                        "vector_store_predelete_failed",
+                        doc_id=doc_id,
+                        error=str(exc),
+                    )
 
                 # Vector-first: embedding/pgvector write is more likely to fail
                 # (external API call). If it fails, Neo4j is untouched.

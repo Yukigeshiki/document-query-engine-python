@@ -48,6 +48,7 @@ class TestGCSConnector:
         mock_client.bucket.return_value = mock_bucket
 
         mock_doc = MagicMock()
+        mock_doc.metadata = {}
         mock_reader_cls.return_value.load_data.return_value = [mock_doc]
 
         connector = GCSConnector(gcs_bucket="my-bucket", gcs_client=mock_client)
@@ -57,6 +58,48 @@ class TestGCSConnector:
         mock_client.bucket.assert_called_once_with("my-bucket")
         mock_bucket.list_blobs.assert_called_once_with(prefix="docs/")
         mock_blob.download_to_filename.assert_called_once()
+
+    @patch("app.connectors.gcs.SimpleDirectoryReader")
+    def test_attaches_stable_source_path(self, mock_reader_cls: MagicMock) -> None:
+        """Verify each loaded Document gets a stable source_path metadata key.
+
+        The source_path must survive temp-dir changes so retries can derive
+        the same doc_id and remain idempotent.
+        """
+        mock_blob = MagicMock()
+        mock_blob.name = "uploads/abc-123/report.pdf"
+        mock_bucket = MagicMock()
+        mock_bucket.list_blobs.return_value = [mock_blob]
+
+        mock_client = MagicMock()
+        mock_client.bucket.return_value = mock_bucket
+
+        mock_doc = MagicMock()
+
+        # SimpleDirectoryReader sets file_path to the absolute temp-dir path.
+        # We use a side_effect on load_data so we can read the actual temp path
+        # the connector chose and simulate the reader's behavior accurately.
+        captured_input_dir: dict[str, str] = {}
+
+        def fake_init(input_dir: str, **_: object) -> MagicMock:
+            captured_input_dir["path"] = input_dir
+            return mock_reader_cls.return_value
+
+        mock_reader_cls.side_effect = fake_init
+
+        def fake_load_data() -> list[MagicMock]:
+            mock_doc.metadata = {
+                "file_path": f"{captured_input_dir['path']}/uploads/abc-123/report.pdf",
+            }
+            return [mock_doc]
+
+        mock_reader_cls.return_value.load_data.side_effect = fake_load_data
+
+        connector = GCSConnector(gcs_bucket="my-bucket", gcs_client=mock_client)
+        docs = list(connector.load_documents({"prefix": "uploads/abc-123/"}))
+
+        assert len(docs) == 1
+        assert docs[0].metadata["source_path"] == "gs://my-bucket/uploads/abc-123/report.pdf"
 
     def test_missing_bucket_raises(self) -> None:
         """Verify BadRequestError when no bucket is configured."""

@@ -4,7 +4,7 @@ import structlog
 from fastapi import APIRouter, Depends, Query, Request, UploadFile
 
 from app.core.config import settings
-from app.core.errors import ServiceUnavailableError
+from app.core.errors import NotFoundError, ServiceUnavailableError
 from app.core.rate_limit import limiter
 from app.dependencies import get_kg_service, get_upload_service
 from app.models.knowledge_graph import (
@@ -52,13 +52,19 @@ async def list_documents(
 async def delete_document(
     request: Request,
     doc_id: str,
+    service: KnowledgeGraphService = Depends(get_kg_service),
 ) -> TaskAcceptedResponse:
     """
     Submit a document deletion job for background processing.
 
-    Deletes the document from all storage layers (Neo4j, pgvector, docstore).
-    Returns a task ID for polling. Retries automatically on partial failure.
+    Validates that the document exists synchronously so a typoed doc_id
+    returns 404 immediately. The actual deletion runs as a Celery task
+    that deletes from all storage layers (Neo4j, pgvector, docstore).
+    Returns a task ID for polling.
     """
+    if not await service.document_exists(doc_id):
+        raise NotFoundError(detail=f"Document {doc_id} not found")
+
     try:
         result = delete_document_task.delay(doc_id=doc_id)
     except Exception as exc:
