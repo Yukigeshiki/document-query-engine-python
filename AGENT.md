@@ -1,4 +1,4 @@
-# Agent Query Engine - Agent Guidelines
+# Document Query Engine - Agent Guidelines
 
 ## Project Overview
 
@@ -23,7 +23,7 @@ FastAPI backend service that exposes a LlamaIndex Knowledge Graph query engine o
 ```
 app/
 ├── api/v1/          # API route handlers
-├── connectors/      # Document source connectors (filesystem, GCS)
+├── connectors/      # Document source connectors (GCS)
 ├── core/            # Config (Pydantic Settings), logging, errors, middleware
 ├── models/          # Pydantic request/response schemas (CamelModel base)
 ├── services/        # Business logic (KnowledgeGraphService, IngestionPipeline)
@@ -32,6 +32,8 @@ tests/               # Pytest test suite
 ```
 
 ## Commands
+
+All commands run from `services/query-engine/`.
 
 ```bash
 # Install dependencies
@@ -74,12 +76,3 @@ poetry run celery -A app.worker.celery_app:celery_app worker --loglevel=info
 - Use `pytest-asyncio` with mode `auto`
 - Use `httpx.AsyncClient` with `ASGITransport` for endpoint tests
 - Fixtures defined in `tests/conftest.py`
-
-## Docker
-
-```bash
-docker build -t agent-query-engine .
-docker run -p 8000:8000 agent-query-engine
-```
-
-Multi-stage Dockerfile: base → builder (Poetry install) → runtime (minimal image).
