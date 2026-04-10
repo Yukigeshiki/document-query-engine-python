@@ -1,5 +1,8 @@
 <template>
-  <div v-if="sourceNodes.length > 0" class="space-y-2">
+  <div
+    v-if="sourceNodes.length > 0"
+    class="space-y-2"
+  >
     <h3 class="text-sm font-semibold text-muted-foreground">
       {{ sourceNodes.length >= 5 ? 'Top 5 Sources' : 'Top Sources' }}
     </h3>

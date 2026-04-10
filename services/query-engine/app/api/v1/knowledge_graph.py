@@ -165,7 +165,9 @@ async def get_subgraph(
 @limiter.limit(settings.rate_limit_default)
 async def get_document_graph(
     request: Request,
-    doc_ids: list[str] = Query(..., max_length=50, description="Document IDs (supports multi-chunk docs, max 50)"),
+    doc_ids: list[str] = Query(
+        ..., max_length=50, description="Document IDs (max 50)",
+    ),
     service: KnowledgeGraphService = Depends(get_kg_service),
 ) -> SubgraphResponse:
     """Retrieve the graph for a specific ingested document."""

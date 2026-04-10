@@ -1,7 +1,6 @@
 """Task status models for background processing."""
 
 from enum import StrEnum
-from typing import Any
 
 from pydantic import Field
 

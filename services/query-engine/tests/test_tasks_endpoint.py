@@ -3,9 +3,9 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from httpx import AsyncClient
 
 from app.models.knowledge_graph import SourceType
-from httpx import AsyncClient
 
 
 @pytest.mark.asyncio

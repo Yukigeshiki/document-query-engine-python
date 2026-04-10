@@ -1,13 +1,13 @@
 <template>
   <div
-    @dragover.prevent="isDragging = true"
-    @dragleave.prevent="isDragging = false"
-    @drop.prevent="onDrop"
-    @click="openFilePicker"
     :class="[
       'border-2 border-dashed rounded-lg p-12 text-center cursor-pointer transition-colors',
       isDragging ? 'border-primary bg-accent' : 'border-border hover:border-primary/50',
     ]"
+    @dragover.prevent="isDragging = true"
+    @dragleave.prevent="isDragging = false"
+    @drop.prevent="onDrop"
+    @click="openFilePicker"
   >
     <input
       ref="fileInput"
@@ -15,9 +15,12 @@
       :accept="ACCEPTED_EXTENSIONS"
       class="hidden"
       @change="onFileSelected"
-    />
+    >
 
-    <div v-if="!selectedFile" class="flex flex-col items-center gap-3">
+    <div
+      v-if="!selectedFile"
+      class="flex flex-col items-center gap-3"
+    >
       <Upload class="h-10 w-10 text-muted-foreground" />
       <p class="text-sm font-medium">
         Drag & drop a file here, or click to browse
@@ -27,15 +30,23 @@
       </p>
     </div>
 
-    <div v-else class="flex flex-col items-center gap-3">
+    <div
+      v-else
+      class="flex flex-col items-center gap-3"
+    >
       <FileText class="h-10 w-10 text-primary" />
-      <p class="text-sm font-medium">{{ selectedFile.name }}</p>
+      <p class="text-sm font-medium">
+        {{ selectedFile.name }}
+      </p>
       <p class="text-xs text-muted-foreground">
         {{ formatFileSize(selectedFile.size) }}
       </p>
     </div>
 
-    <p v-if="validationError" class="mt-3 text-sm text-destructive">
+    <p
+      v-if="validationError"
+      class="mt-3 text-sm text-destructive"
+    >
       {{ validationError }}
     </p>
   </div>

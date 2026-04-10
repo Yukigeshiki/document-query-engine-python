@@ -1,27 +1,23 @@
-"""Knowledge graph service backed by LlamaIndex KnowledgeGraphIndex."""
+"""
+Knowledge graph service facade.
+
+Coordinates Neo4j, pgvector, and the docstore through focused sub-services
+for ingestion, deletion, and querying. This class is the public interface
+used by API endpoints, Celery tasks, and the ingestion pipeline.
+"""
 
 import asyncio
-import hashlib
-import time
-from datetime import UTC, datetime
 from functools import partial
 from typing import Any
 from urllib.parse import urlparse
 
 import structlog
-from sqlalchemy import Engine
 from llama_index.core import (
-    Document,
-    KnowledgeGraphIndex,
     Settings,
     StorageContext,
     VectorStoreIndex,
     load_index_from_storage,
 )
-from llama_index.core.node_parser import SentenceSplitter
-from llama_index.core.query_engine import RetrieverQueryEngine
-from llama_index.core.schema import MetadataMode
-from llama_index.core.response_synthesizers import get_response_synthesizer
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.graph_stores.neo4j import Neo4jGraphStore
 from llama_index.llms.openai import OpenAI
@@ -29,44 +25,24 @@ from llama_index.storage.docstore.postgres import PostgresDocumentStore
 from llama_index.storage.index_store.postgres import PostgresIndexStore
 from llama_index.storage.kvstore.postgres.base import PostgresKVStore
 from llama_index.vector_stores.postgres import PGVectorStore
+from sqlalchemy import Engine
 
 from app.core.config import Settings as AppSettings
-from app.core.errors import (
-    DeletionError,
-    IngestionError,
-    NotFoundError,
-    QueryError,
-    ServiceUnavailableError,
-)
-from app.core.metrics import (
-    kg_cache_up,
-    kg_graph_store_up,
-    kg_ingest_duration_seconds,
-    kg_ingest_total,
-    kg_ingest_triplets_total,
-    kg_query_cache_hits_total,
-    kg_query_cache_misses_total,
-    kg_query_duration_seconds,
-    kg_query_total,
-    kg_subgraph_duration_seconds,
-    kg_subgraph_total,
-    kg_vector_store_up,
-)
+from app.core.metrics import kg_cache_up, kg_graph_store_up, kg_vector_store_up
 from app.models.knowledge_graph import (
     ResponseMode,
     RetrievalMode,
     SourceNodeInfo,
-    SourceNodeMetadata,
-    SourceRetrievalType,
     SubgraphEdge,
     SubgraphNode,
 )
-from app.services.dual_retriever import DualRetriever
+from app.services.kg_deletion import KGDeletionService
+from app.services.kg_ingestion import KGIngestionService
+from app.services.kg_query import KGQueryService
 from app.services.query_cache import QueryCache
 
 logger = structlog.stdlib.get_logger(__name__)
 
-KG_INDEX_ID = "kg_index"
 VECTOR_INDEX_ID = "vector_index"
 
 
@@ -79,11 +55,12 @@ class KnowledgeGraphService:
         cache: QueryCache | None = None,
         engine: Engine | None = None,
     ) -> None:
-        """Initialize LlamaIndex settings, stores, and indexes."""
+        """Initialize LlamaIndex settings, stores, and sub-services."""
         if config.postgres_enabled and config.postgres_uri and engine is None:
             raise ValueError(
-                "A shared SQLAlchemy engine is required when PostgreSQL is enabled. "
-                "Create one with get_pg_engine() and pass it to KnowledgeGraphService."
+                "A shared SQLAlchemy engine is required when PostgreSQL "
+                "is enabled. Create one with get_pg_engine() and pass "
+                "it to KnowledgeGraphService."
             )
         self._cache = cache
         self._engine = engine
@@ -107,17 +84,41 @@ class KnowledgeGraphService:
         self._postgres_enabled = config.postgres_enabled
         self._graph_store = self._create_graph_store(config)
         self._storage_context = self._create_storage_context(config)
-        self._max_triplets = config.max_triplets_per_chunk
-        self._vector_top_k = config.vector_top_k
-
-        self._index = self._load_or_create_kg_index()
         self._vector_index = self._load_or_create_vector_index()
+
+        self._ingestion = KGIngestionService(
+            graph_store=self._graph_store,
+            vector_index=self._vector_index,
+            storage_context=self._storage_context,
+            cache=cache,
+            max_triplets=config.max_triplets_per_chunk,
+        )
+        self._deletion = KGDeletionService(
+            graph_store=self._graph_store,
+            vector_index=self._vector_index,
+            storage_context=self._storage_context,
+            cache=cache,
+        )
+        self._query = KGQueryService(
+            graph_store=self._graph_store,
+            vector_index=self._vector_index,
+            storage_context=self._storage_context,
+            cache=cache,
+            vector_top_k=config.vector_top_k,
+            postgres_enabled=self._postgres_enabled,
+        )
 
         logger.info(
             "knowledge_graph_service_initialized",
             graph_backend="neo4j",
-            vector_backend="pgvector" if self._postgres_enabled else "in_memory",
+            vector_backend=(
+                "pgvector" if self._postgres_enabled else "in_memory"
+            ),
         )
+
+    # ------------------------------------------------------------------
+    # Infrastructure
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _create_graph_store(config: AppSettings) -> Neo4jGraphStore:
@@ -135,86 +136,62 @@ class KnowledgeGraphService:
         logger.info("neo4j_connected", uri=config.neo4j_uri)
         return store
 
-    def _create_storage_context(self, config: AppSettings) -> StorageContext:
-        """Create a StorageContext with optional PostgreSQL persistence."""
+    def _create_storage_context(
+        self, config: AppSettings
+    ) -> StorageContext:
+        """
+        Create a StorageContext with PostgreSQL persistence.
+
+        Raises on connection failure — the service should not start with
+        degraded (in-memory) storage in production.
+        """
         if not config.postgres_enabled or not config.postgres_uri:
             self._postgres_enabled = False
-            return StorageContext.from_defaults(graph_store=self._graph_store)
-
-        try:
-            parsed = urlparse(config.postgres_uri)
-
-            vector_store = PGVectorStore.from_params(
-                host=parsed.hostname or "localhost",
-                port=str(parsed.port or 5432),
-                database=(parsed.path or "/query_engine").lstrip("/"),
-                user=parsed.username or "postgres",
-                password=parsed.password or "",
-                embed_dim=config.embed_dim,
-                hybrid_search=True,
-                text_search_config="english",
-                create_engine_kwargs={"pool_pre_ping": True},
-            )
-
-            # Use the shared engine (with pool_pre_ping) for docstore and index store.
-            # PostgresKVStore requires an async connection string even when
-            # using a sync engine.
-            sync_parsed = urlparse(config.postgres_uri)
-            async_uri = sync_parsed._replace(
-                scheme="postgresql+asyncpg"
-            ).geturl()
-            pg_engine = self._engine
-            doc_kvstore = PostgresKVStore(
-                table_name="docstore",
-                engine=pg_engine,
-                async_connection_string=async_uri,
-                perform_setup=True,
-            )
-            index_kvstore = PostgresKVStore(
-                table_name="indexstore",
-                engine=pg_engine,
-                async_connection_string=async_uri,
-                perform_setup=True,
-            )
-            docstore = PostgresDocumentStore(postgres_kvstore=doc_kvstore)
-            index_store = PostgresIndexStore(postgres_kvstore=index_kvstore)
-
-            logger.info("postgres_connected", uri=parsed.hostname)
             return StorageContext.from_defaults(
-                graph_store=self._graph_store,
-                vector_store=vector_store,
-                docstore=docstore,
-                index_store=index_store,
+                graph_store=self._graph_store
             )
-        except Exception as exc:
-            logger.warning(
-                "postgres_connection_failed_falling_back_to_in_memory",
-                error=str(exc),
-            )
-            self._postgres_enabled = False
-            return StorageContext.from_defaults(graph_store=self._graph_store)
 
-    def _load_or_create_kg_index(self) -> KnowledgeGraphIndex:
-        """Load existing KG index from storage or create a new one."""
-        if self._postgres_enabled:
-            try:
-                index = load_index_from_storage(
-                    storage_context=self._storage_context,
-                    index_id=KG_INDEX_ID,
-                )
-                logger.info("kg_index_loaded_from_storage")
-                return index  # type: ignore[return-value]
-            except (ValueError, KeyError):
-                pass
+        parsed = urlparse(config.postgres_uri)
 
-        index = KnowledgeGraphIndex(
-            nodes=[],
-            storage_context=self._storage_context,
-            max_triplets_per_chunk=self._max_triplets,
+        vector_store = PGVectorStore.from_params(
+            host=parsed.hostname or "localhost",
+            port=str(parsed.port or 5432),
+            database=(parsed.path or "/query_engine").lstrip("/"),
+            user=parsed.username or "postgres",
+            password=parsed.password or "",
+            embed_dim=config.embed_dim,
+            hybrid_search=True,
+            text_search_config="english",
+            create_engine_kwargs={"pool_pre_ping": True},
         )
-        index.set_index_id(KG_INDEX_ID)
-        logger.info("kg_index_created_new")
-        return index
+
+        sync_parsed = urlparse(config.postgres_uri)
+        async_uri = sync_parsed._replace(
+            scheme="postgresql+asyncpg"
+        ).geturl()
+        pg_engine = self._engine
+        doc_kvstore = PostgresKVStore(
+            table_name="docstore",
+            engine=pg_engine,
+            async_connection_string=async_uri,
+            perform_setup=True,
+        )
+        index_kvstore = PostgresKVStore(
+            table_name="indexstore",
+            engine=pg_engine,
+            async_connection_string=async_uri,
+            perform_setup=True,
+        )
+        docstore = PostgresDocumentStore(postgres_kvstore=doc_kvstore)
+        index_store = PostgresIndexStore(postgres_kvstore=index_kvstore)
+
+        logger.info("postgres_connected", uri=parsed.hostname)
+        return StorageContext.from_defaults(
+            graph_store=self._graph_store,
+            vector_store=vector_store,
+            docstore=docstore,
+            index_store=index_store,
+        )
 
     def _load_or_create_vector_index(self) -> VectorStoreIndex:
         """Load existing vector index from storage or create a new one."""
@@ -237,68 +214,17 @@ class KnowledgeGraphService:
         logger.info("vector_index_created_new")
         return index
 
-    def _reload_kg_index(self) -> None:
-        """Reload the KG index from storage to pick up worker-side changes."""
-        if not self._postgres_enabled:
-            return
-        try:
-            self._index = load_index_from_storage(
-                storage_context=self._storage_context,
-                index_id=KG_INDEX_ID,
-            )
-            logger.info("kg_index_reloaded_from_storage")
-        except (ValueError, KeyError):
-            logger.warning("kg_index_reload_failed")
-
-    def _count_triplets(self) -> int:
-        """Count the number of triplets in Neo4j."""
-        try:
-            result = self._graph_store.query(
-                "MATCH ()-[r]->() RETURN count(r) AS cnt"
-            )
-            return int(result[0]["cnt"]) if result else 0
-        except Exception as exc:
-            logger.warning("triplet_count_failed", error=str(exc))
-            return -1
-
-    def _upsert_triplet_with_source(
-        self, subj: str, rel: str, obj: str, source_node_id: str
-    ) -> None:
-        """
-        Upsert a triplet and track which node produced it.
-
-        Stores a `source_node_ids` list property on the Neo4j
-        relationship so deletion can precisely target the right edges.
-        """
-        rel_type = rel.replace(" ", "_").upper()
-        label = self._graph_store.node_label
-        cypher = (
-            f"MERGE (n1:`{label}` {{id: $subj}}) "
-            f"MERGE (n2:`{label}` {{id: $obj}}) "
-            f"MERGE (n1)-[r:`{rel_type}`]->(n2) "
-            "ON CREATE SET r.source_node_ids = [$source_node_id] "
-            "ON MATCH SET r.source_node_ids = CASE "
-            "  WHEN $source_node_id IN r.source_node_ids "
-            "    THEN r.source_node_ids "
-            "  ELSE r.source_node_ids + $source_node_id "
-            "END"
-        )
-        self._graph_store.query(
-            cypher,
-            {"subj": subj, "obj": obj, "source_node_id": source_node_id},
-        )
-
     def close(self) -> None:
         """Close Neo4j connection."""
         self._graph_store.close()
         logger.info("neo4j_connection_closed")
 
-    async def check_graph_store_health(self) -> dict[str, str]:
-        """
-        Check graph store connectivity.
+    # ------------------------------------------------------------------
+    # Health checks
+    # ------------------------------------------------------------------
 
-        Returns a dict with status, backend, and optional error.
-        """
+    async def check_graph_store_health(self) -> dict[str, str]:
+        """Check graph store connectivity."""
         loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(
@@ -309,14 +235,14 @@ class KnowledgeGraphService:
             return {"status": "ok", "backend": "neo4j"}
         except Exception as exc:
             kg_graph_store_up.set(0)
-            return {"status": "degraded", "backend": "neo4j", "error": str(exc)}
+            return {
+                "status": "degraded",
+                "backend": "neo4j",
+                "error": str(exc),
+            }
 
     async def check_vector_store_health(self) -> dict[str, str] | None:
-        """
-        Check PostgreSQL/pgvector connectivity.
-
-        Returns None if PostgreSQL is not enabled.
-        """
+        """Check PostgreSQL/pgvector connectivity."""
         if not self._postgres_enabled:
             kg_vector_store_up.set(1)
             return None
@@ -331,222 +257,27 @@ class KnowledgeGraphService:
             return {"status": "ok", "backend": "pgvector"}
         except Exception as exc:
             kg_vector_store_up.set(0)
-            return {"status": "degraded", "backend": "pgvector", "error": str(exc)}
+            return {
+                "status": "degraded",
+                "backend": "pgvector",
+                "error": str(exc),
+            }
 
     async def check_cache_health(self) -> dict[str, str] | None:
-        """Check query cache connectivity. Returns None if cache is not enabled."""
+        """Check query cache connectivity."""
         if self._cache is None:
             kg_cache_up.set(1)
             return None
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, self._cache.check_health)
+        result = await loop.run_in_executor(
+            None, self._cache.check_health
+        )
         kg_cache_up.set(1 if result.get("status") == "ok" else 0)
         return result
 
-    async def document_exists(self, doc_id: str) -> bool:
-        """Return True if a document with this doc_id exists in the docstore.
-
-        Cheap key lookup (single docstore query) used by the delete endpoint
-        to validate input synchronously, so a typoed doc_id returns 404
-        immediately instead of dispatching a background task that would
-        eventually report failure.
-        """
-        loop = asyncio.get_running_loop()
-
-        def _check() -> bool:
-            info = self._storage_context.docstore.get_ref_doc_info(doc_id)
-            return info is not None
-
-        return await loop.run_in_executor(None, _check)
-
-    async def list_documents(
-        self,
-        limit: int = 20,
-        offset: int = 0,
-    ) -> tuple[list[dict[str, Any]], int]:
-        """
-        List ingested documents from the docstore.
-
-        Returns a tuple of (documents, total_count) for pagination.
-        Documents are sorted newest-first (by insertion order, reversed).
-        """
-        loop = asyncio.get_running_loop()
-
-        def _list_sync() -> tuple[list[dict[str, Any]], int]:
-            ref_doc_info = self._storage_context.docstore.get_all_ref_doc_info()
-            if not ref_doc_info:
-                return [], 0
-
-            # Group chunks by file_path so multi-chunk docs appear as one entry.
-            # file_path is unique per upload (includes the upload subdirectory),
-            # so two uploads of the same filename stay separate.
-            grouped: dict[str, dict[str, Any]] = {}
-            for doc_id, info in ref_doc_info.items():
-                metadata = info.metadata or {}
-                group_key = metadata.get("file_path") or metadata.get("file_name") or doc_id
-                if group_key not in grouped:
-                    grouped[group_key] = {
-                        "doc_id": doc_id,
-                        "file_name": metadata.get("file_name") or doc_id,
-                        "node_count": 0,
-                        "doc_ids": [],
-                        "metadata": metadata,
-                    }
-                grouped[group_key]["node_count"] += len(info.node_ids)
-                grouped[group_key]["doc_ids"].append(doc_id)
-
-            # Newest first by ingested_at
-            all_docs = sorted(
-                grouped.values(),
-                key=lambda d: d["metadata"].get("ingested_at", ""),
-                reverse=True,
-            )
-            total = len(all_docs)
-            return all_docs[offset : offset + limit], total
-
-        return await loop.run_in_executor(None, _list_sync)
-
-    def _delete_neo4j_provenance(
-        self,
-        node_ids: set[str],
-        index_struct: Any,
-    ) -> None:
-        """
-        Delete Neo4j relationships using source_node_ids provenance.
-
-        Precisely removes only the node_ids belonging to the deleted
-        document from each relationship's `source_node_ids` list.
-        Relationships whose list becomes empty are deleted.
-        Orphaned Entity nodes are cleaned up at the end.
-        """
-        node_id_list = list(node_ids)
-        label = self._graph_store.node_label
-
-        # Determine which entities our document contributed
-        our_entities: set[str] = set()
-        for entity, node_id_set in index_struct.table.items():
-            if node_id_set.intersection(node_ids):
-                our_entities.add(entity)
-
-        entity_list = list(our_entities)
-
-        # entity -> True if fully orphaned (sole owner), False if shared
-        entity_actions: dict[str, bool] = {
-            entity: (index_struct.table[entity] - node_ids) == set()
-            for entity in our_entities
-        }
-
-        # Step 1: Remove our node_ids from relationship provenance.
-        # Delete the relationship entirely when no source_node_ids remain.
-        self._graph_store.query(
-            "MATCH ()-[r]->() "
-            "WHERE ANY(nid IN r.source_node_ids WHERE nid IN $node_ids) "
-            "SET r.source_node_ids = "
-            "  [x IN r.source_node_ids WHERE NOT x IN $node_ids] "
-            "WITH r WHERE size(r.source_node_ids) = 0 "
-            "DELETE r",
-            {"node_ids": node_id_list},
-        )
-
-        # Step 2: Clean up orphaned Entity nodes (no remaining edges).
-        if entity_list:
-            self._graph_store.query(
-                f"MATCH (n:`{label}`) "
-                "WHERE n.id IN $entities AND NOT (n)--() "
-                "DELETE n",
-                {"entities": entity_list},
-            )
-
-        # Step 4: Update the index struct.
-        for entity, remove_entirely in entity_actions.items():
-            if remove_entirely:
-                del index_struct.table[entity]
-            else:
-                index_struct.table[entity] -= node_ids
-
-        self._storage_context.index_store.add_index_struct(index_struct)
-
-    async def delete_document(self, doc_id: str) -> list[str]:
-        """
-        Delete a document and all its data from every storage layer.
-
-        Resolves all doc_ids for the grouped document (multi-chunk uploads
-        share the same file_path) and removes them from the KG index struct,
-        graph store, vector index, and docstore.
-
-        Deletion order is chosen for retry safety — the docstore (source of
-        truth for node_ids) is deleted last so retries can still resolve
-        what needs cleaning up. Each store's delete is idempotent.
-
-        Returns the list of deleted doc_ids.
-        """
-        loop = asyncio.get_running_loop()
-
-        def _delete_sync() -> list[str]:
-            ref_doc_info = self._storage_context.docstore.get_all_ref_doc_info()
-            if doc_id not in ref_doc_info:
-                raise NotFoundError(detail=f"Document {doc_id} not found")
-
-            # Resolve all doc_ids sharing the same group key (same logic as list_documents)
-            metadata = ref_doc_info[doc_id].metadata or {}
-            group_key = (
-                metadata.get("file_path")
-                or metadata.get("file_name")
-                or doc_id
-            )
-            all_doc_ids = [
-                did
-                for did, info in ref_doc_info.items()
-                if (info.metadata or {}).get("file_path", (info.metadata or {}).get("file_name", did))
-                == group_key
-            ]
-
-            # Collect all node_ids across grouped doc_ids
-            all_node_ids: set[str] = set()
-            for did in all_doc_ids:
-                info = ref_doc_info.get(did)
-                if info:
-                    all_node_ids.update(info.node_ids)
-
-            # 1. Clean up KG graph store + index struct.
-            #    KnowledgeGraphIndex._delete_node raises NotImplementedError,
-            #    so we handle this manually using source_node_ids provenance.
-            index_struct = self._index.index_struct
-            self._delete_neo4j_provenance(all_node_ids, index_struct)
-
-            # 2. Delete from vector index (pgvector) — idempotent
-            for ref_doc_id in all_doc_ids:
-                self._vector_index.delete_ref_doc(
-                    ref_doc_id, delete_from_docstore=False
-                )
-
-            # 3. Delete from docstore last — it's the source of truth for
-            #    node_ids, so keeping it until the end makes retries safe.
-            for ref_doc_id in all_doc_ids:
-                self._storage_context.docstore.delete_ref_doc(
-                    ref_doc_id, raise_error=False
-                )
-
-            return all_doc_ids
-
-        try:
-            deleted_ids = await loop.run_in_executor(None, _delete_sync)
-            logger.info(
-                "document_deleted",
-                doc_id=doc_id,
-                deleted_doc_ids=deleted_ids,
-            )
-            return deleted_ids
-        except NotFoundError:
-            raise
-        except Exception as exc:
-            logger.error("deletion_failed", doc_id=doc_id, error=str(exc))
-            raise DeletionError(
-                detail=f"Failed to delete document: {exc}"
-            ) from exc
-        finally:
-            if self._cache is not None:
-                await self._cache.invalidate()
+    # ------------------------------------------------------------------
+    # Delegation to sub-services
+    # ------------------------------------------------------------------
 
     async def ingest(
         self,
@@ -554,133 +285,24 @@ class KnowledgeGraphService:
         source_id: str,
         metadata: dict[str, Any] | None = None,
     ) -> tuple[str, int]:
-        """
-        Ingest a document into both KG and vector indexes.
+        """Ingest a document into both KG and vector indexes."""
+        return await self._ingestion.ingest(text, source_id, metadata)
 
-        `source_id` must be a stable identifier for this document (e.g.
-        derived from the source path and content hash). The resulting
-        `doc_id` is `sha256(source_id)`, which makes the call idempotent —
-        re-running with the same source_id replaces any prior vector-store
-        state for that document instead of creating duplicates. This makes
-        the ingest path safe to retry after a Celery worker crash.
+    async def delete_document(self, doc_id: str) -> list[str]:
+        """Delete a document from all storage layers."""
+        return await self._deletion.delete_document(doc_id)
 
-        Returns a tuple of (document_id, triplet_count).
-        """
-        doc_id = hashlib.sha256(source_id.encode()).hexdigest()
-        # Store all metadata in the docstore (for grouping, display, etc.)
-        # but exclude everything from LLM triplet extraction so it doesn't
-        # pollute the knowledge graph.
-        doc_metadata = metadata or {}
-        doc_metadata["ingested_at"] = datetime.now(tz=UTC).isoformat()
-        doc = Document(
-            text=text,
-            doc_id=doc_id,
-            metadata=doc_metadata,
-            excluded_llm_metadata_keys=list(doc_metadata.keys()),
-        )
+    async def document_exists(self, doc_id: str) -> bool:
+        """Return True if a document with this doc_id exists."""
+        return await self._deletion.document_exists(doc_id)
 
-        start = time.perf_counter()
-        loop = asyncio.get_running_loop()
-        try:
-
-            def _ingest_sync() -> int:
-                # Stable node IDs based on doc_id + chunk position + content
-                # so retries don't create duplicate nodes/triplets
-                def _stable_id(i: int, doc: Document) -> str:
-                    content = doc.get_content()
-                    return hashlib.sha256(
-                        f"{doc.doc_id}:{i}:{content}".encode()
-                    ).hexdigest()
-
-                parser = SentenceSplitter(
-                    chunk_size=Settings.chunk_size,
-                    id_func=_stable_id,
-                )
-                nodes = parser.get_nodes_from_documents([doc])
-
-                # Exclude all metadata from LLM triplet extraction, so file-system
-                # details (file_path, file_size, creation_date, etc.) don't pollute
-                # the knowledge graph. Metadata is still stored in the docstore.
-                for node in nodes:
-                    node.excluded_llm_metadata_keys = list(node.metadata.keys())
-
-                # Idempotency guard: PGVectorStore.add() does NOT enforce
-                # uniqueness on node_id, so a Celery retry of an ingest
-                # would otherwise accumulate duplicate vector rows.
-                # Explicitly purge any prior rows for this doc_id before
-                # re-inserting. Safe no-op on the first run. Neo4j MERGE and
-                # the postgres docstore (`allow_update=True`) handle their
-                # own dedupe; the vector store is the only layer that needs
-                # this.
-                try:
-                    self._vector_index.vector_store.delete(ref_doc_id=doc_id)
-                except Exception as exc:
-                    logger.warning(
-                        "vector_store_predelete_failed",
-                        doc_id=doc_id,
-                        error=str(exc),
-                    )
-
-                # Vector-first: embedding/pgvector write is more likely to fail
-                # (external API call). If it fails, Neo4j is untouched.
-                # If it succeeds and KG insert fails, we have embeddings without
-                # triplets (queryable via vector_only mode) — safer partial state.
-                self._vector_index.insert_nodes(nodes)
-
-                # VectorStoreIndex skips the docstore write when
-                # PGVectorStore.stores_text is True.  Write explicitly
-                # so list_documents / delete_document can find RefDocInfo.
-                self._storage_context.docstore.add_documents(
-                    nodes, allow_update=True
-                )
-
-                triplets_before = self._count_triplets()
-
-                # Manual KG insertion: extract triplets ourselves so we
-                # can store source_node_ids on Neo4j relationships for
-                # precise deletion later.
-                for node in nodes:
-                    # No public API for triplet extraction; _extract_triplets
-                    # is the only entry point (class is deprecated upstream).
-                    triplets = self._index._extract_triplets(
-                        node.get_content(metadata_mode=MetadataMode.LLM)
-                    )
-                    for subj, rel, obj in triplets:
-                        self._upsert_triplet_with_source(
-                            subj, rel, obj, node.node_id
-                        )
-                        self._index.index_struct.add_node(
-                            [subj, obj], node
-                        )
-                self._storage_context.index_store.add_index_struct(
-                    self._index.index_struct
-                )
-
-                triplets_after = self._count_triplets()
-                return max(triplets_after - triplets_before, 0)
-
-            triplet_count = await loop.run_in_executor(None, _ingest_sync)
-
-            kg_ingest_duration_seconds.observe(time.perf_counter() - start)
-            kg_ingest_total.labels(status="success").inc()
-            kg_ingest_triplets_total.inc(triplet_count)
-
-            logger.info(
-                "document_ingested",
-                document_id=doc_id,
-                triplet_count=triplet_count,
-            )
-            return doc_id, triplet_count
-        except IngestionError:
-            kg_ingest_total.labels(status="error").inc()
-            raise
-        except Exception as exc:
-            kg_ingest_total.labels(status="error").inc()
-            logger.error("ingestion_failed", document_id=doc_id, error=str(exc))
-            raise IngestionError(detail=f"Failed to ingest document: {exc}") from exc
-        finally:
-            if self._cache is not None:
-                await self._cache.invalidate()
+    async def list_documents(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """List ingested documents with pagination."""
+        return await self._deletion.list_documents(limit, offset)
 
     async def query(
         self,
@@ -689,271 +311,22 @@ class KnowledgeGraphService:
         response_mode: ResponseMode = ResponseMode.TREE_SUMMARIZE,
         retrieval_mode: RetrievalMode = RetrievalMode.DUAL,
     ) -> tuple[str, list[SourceNodeInfo]]:
-        """
-        Query using KG, vector, or dual retrieval.
-
-        Returns a tuple of (response_text, source_nodes).
-        """
-        start = time.perf_counter()
-        loop = asyncio.get_running_loop()
-        try:
-            mode = RetrievalMode(retrieval_mode)
-
-            # Fallback to kg_only if vector store not available
-            if not self._postgres_enabled and mode != RetrievalMode.KG_ONLY:
-                logger.warning(
-                    "vector_store_not_available_falling_back_to_kg_only",
-                    requested_mode=retrieval_mode,
-                )
-                mode = RetrievalMode.KG_ONLY
-
-            def _query_sync() -> tuple[str, list[SourceNodeInfo]]:
-                # Check semantic cache (blocking I/O — runs in executor)
-                # Embed once and reuse for both get() and set()
-                query_embedding: list[float] | None = None
-                if self._cache is not None:
-                    query_embedding = self._cache.embed_query(query_text)
-                    cached = self._cache.get(
-                        query_text, include_text, response_mode, retrieval_mode,
-                        embedding=query_embedding,
-                    )
-                    if cached is not None:
-                        kg_query_cache_hits_total.inc()
-                        response_text, source_nodes, _ = cached
-                        return response_text, source_nodes
-                    kg_query_cache_misses_total.inc()
-
-                kg_retriever = self._index.as_retriever(include_text=include_text)
-                vector_retriever = self._vector_index.as_retriever(
-                    similarity_top_k=self._vector_top_k
-                )
-                retriever = DualRetriever(
-                    kg_retriever=kg_retriever,
-                    vector_retriever=vector_retriever,
-                    mode=mode,
-                )
-                synthesizer = get_response_synthesizer(
-                    response_mode=response_mode  # type: ignore[arg-type]
-                )
-                query_engine = RetrieverQueryEngine(
-                    retriever=retriever,
-                    response_synthesizer=synthesizer,
-                )
-                response = query_engine.query(query_text)
-
-                source_nodes = [
-                    SourceNodeInfo(
-                        source_type=node.node.metadata.get(
-                            "_source_type", SourceRetrievalType.VECTOR
-                        ),
-                        score=node.score,
-                        metadata=SourceNodeMetadata(
-                            file_name=node.node.metadata.get("file_name"),
-                        ),
-                    )
-                    for node in response.source_nodes
-                ]
-
-                # Store in cache, reusing pre-computed embedding
-                if self._cache is not None:
-                    self._cache.set(
-                        query_text, include_text, response_mode, retrieval_mode,
-                        str(response), source_nodes,
-                        embedding=query_embedding,
-                    )
-
-                return str(response), source_nodes
-
-            response_text, source_nodes = await loop.run_in_executor(
-                None, _query_sync
-            )
-
-            kg_query_duration_seconds.labels(retrieval_mode=mode.value).observe(
-                time.perf_counter() - start
-            )
-            kg_query_total.labels(retrieval_mode=mode.value, status="success").inc()
-
-            logger.info(
-                "query_completed",
-                query=query_text,
-                retrieval_mode=mode.value,
-                num_sources=len(source_nodes),
-            )
-            return response_text, source_nodes
-        except QueryError:
-            kg_query_total.labels(retrieval_mode=retrieval_mode, status="error").inc()
-            raise
-        except Exception as exc:
-            kg_query_total.labels(retrieval_mode=retrieval_mode, status="error").inc()
-            logger.error("query_failed", query=query_text, error=str(exc))
-            raise QueryError(detail=f"Query failed: {exc}") from exc
-
-    @staticmethod
-    def _records_to_graph(
-        records: list[dict[str, Any]],
-    ) -> tuple[list[SubgraphNode], list[SubgraphEdge]]:
-        """Convert Neo4j query records to SubgraphNode/SubgraphEdge lists."""
-        node_map: dict[str, SubgraphNode] = {}
-        edges: list[SubgraphEdge] = []
-
-        for record in records:
-            src_id = str(record["source_id"])
-            tgt_id = str(record["target_id"])
-
-            if src_id not in node_map:
-                labels = record.get("source_labels", [])
-                node_map[src_id] = SubgraphNode(
-                    id=src_id,
-                    label=labels[0] if labels else None,
-                    properties={},
-                )
-            if tgt_id not in node_map:
-                labels = record.get("target_labels", [])
-                node_map[tgt_id] = SubgraphNode(
-                    id=tgt_id,
-                    label=labels[0] if labels else None,
-                    properties={},
-                )
-
-            edges.append(SubgraphEdge(
-                source=src_id,
-                target=tgt_id,
-                relation=str(record["relation"]),
-            ))
-
-        return list(node_map.values()), edges
+        """Query using KG, vector, or dual retrieval."""
+        return await self._query.query(
+            query_text, include_text, response_mode, retrieval_mode
+        )
 
     async def get_subgraph(
         self,
         entity: str,
         depth: int = 2,
     ) -> tuple[list[SubgraphNode], list[SubgraphEdge]]:
-        """
-        Retrieve a subgraph around an entity using Cypher.
-
-        Returns a tuple of (nodes, edges).
-        Raises ServiceUnavailableError if Neo4j is not enabled.
-        """
-
-        cypher = (
-            f"MATCH path = (start)-[*1..{depth}]-(connected) "
-            "WHERE toLower(start.id) = toLower($entity) "
-            "UNWIND relationships(path) AS rel "
-            "WITH DISTINCT startNode(rel) AS src, rel, endNode(rel) AS tgt "
-            "RETURN src.id AS source_id, labels(src) AS source_labels, "
-            "type(rel) AS relation, "
-            "tgt.id AS target_id, labels(tgt) AS target_labels"
-        )
-
-        start = time.perf_counter()
-        loop = asyncio.get_running_loop()
-        try:
-            records: list[dict[str, Any]] = await loop.run_in_executor(
-                None,
-                partial(
-                    self._graph_store.query,
-                    cypher,
-                    {"entity": entity},
-                ),
-            )
-
-            nodes, edges = self._records_to_graph(records)
-
-            kg_subgraph_duration_seconds.observe(time.perf_counter() - start)
-            kg_subgraph_total.inc()
-
-            logger.info(
-                "subgraph_retrieved",
-                entity=entity,
-                depth=depth,
-                nodes=len(nodes),
-                edges=len(edges),
-            )
-            return nodes, edges
-        except ServiceUnavailableError:
-            raise
-        except Exception as exc:
-            logger.error("subgraph_query_failed", entity=entity, error=str(exc))
-            raise QueryError(detail=f"Subgraph query failed: {exc}") from exc
+        """Retrieve a subgraph around an entity."""
+        return await self._query.get_subgraph(entity, depth)
 
     async def get_document_graph(
         self,
         doc_ids: list[str],
     ) -> tuple[list[SubgraphNode], list[SubgraphEdge]]:
-        """
-        Retrieve the graph for a specific document.
-
-        Accepts multiple doc_ids to handle multi-chunk documents.
-        Finds all entities associated with the documents' nodes
-        and fetches their relationships from Neo4j.
-        """
-
-        loop = asyncio.get_running_loop()
-
-        def _find_doc_entities() -> tuple[set[str], bool]:
-            """
-            Find entities in the index table that belong to the given doc IDs.
-
-            Returns (entities, had_node_ids) where had_node_ids indicates
-            whether the docs were found in the docstore with node IDs.
-            """
-            ref_info = self._storage_context.docstore.get_all_ref_doc_info()
-            if not ref_info:
-                return set(), False
-
-            doc_node_ids: set[str] = set()
-            for did in doc_ids:
-                if did in ref_info:
-                    doc_node_ids.update(ref_info[did].node_ids)
-
-            if not doc_node_ids:
-                return set(), False
-
-            index_struct = getattr(self._index, "_index_struct", None)
-            table = getattr(index_struct, "table", None) if index_struct else None
-            if table is None:
-                logger.warning(
-                    "kg_index_struct_unavailable",
-                    msg="Cannot access KG index table — LlamaIndex internals may have changed",
-                )
-                return set(), True
-
-            entities: set[str] = set()
-            for entity, node_ids in table.items():
-                if doc_node_ids & node_ids:
-                    entities.add(entity)
-            return entities, True
-
-        def _get_doc_graph_sync() -> tuple[list[SubgraphNode], list[SubgraphEdge]]:
-            doc_entities, had_node_ids = _find_doc_entities()
-
-            # Only reload if the doc has node IDs in the docstore but no
-            # matching entities in the index table — this means the in-memory
-            # index is likely stale (worker ingested after API startup).
-            # Skip reload for unknown doc IDs or docs not in the docstore.
-            if not doc_entities and had_node_ids:
-                self._reload_kg_index()
-                doc_entities, _ = _find_doc_entities()
-
-            if not doc_entities:
-                return [], []
-
-            entity_list = list(doc_entities)
-            cypher = (
-                "MATCH (src)-[rel]->(tgt) "
-                "WHERE src.id IN $entities OR tgt.id IN $entities "
-                "RETURN src.id AS source_id, labels(src) AS source_labels, "
-                "type(rel) AS relation, "
-                "tgt.id AS target_id, labels(tgt) AS target_labels"
-            )
-            records = self._graph_store.query(cypher, {"entities": entity_list})
-
-            return self._records_to_graph(records)
-
-        try:
-            return await loop.run_in_executor(None, _get_doc_graph_sync)
-        except ServiceUnavailableError:
-            raise
-        except Exception as exc:
-            logger.error("document_graph_query_failed", doc_ids=doc_ids, error=str(exc))
-            raise QueryError(detail=f"Document graph query failed: {exc}") from exc
+        """Retrieve the graph for a specific document."""
+        return await self._query.get_document_graph(doc_ids)

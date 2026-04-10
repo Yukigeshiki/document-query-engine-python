@@ -12,12 +12,18 @@
       </div>
 
       <button
-        @click="toggleSidebar"
         class="p-2 rounded-md hover:bg-accent transition-colors cursor-pointer"
         :aria-label="isExpanded ? 'Collapse sidebar' : 'Expand sidebar'"
+        @click="toggleSidebar"
       >
-        <ChevronLeft v-if="isExpanded" class="h-5 w-5" />
-        <ChevronRight v-else class="h-5 w-5" />
+        <ChevronLeft
+          v-if="isExpanded"
+          class="h-5 w-5"
+        />
+        <ChevronRight
+          v-else
+          class="h-5 w-5"
+        />
       </button>
     </div>
 
@@ -30,7 +36,10 @@
         class="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-accent transition-colors cursor-pointer"
         active-class="bg-accent"
       >
-        <component :is="item.icon" class="h-5 w-5 shrink-0" />
+        <component
+          :is="item.icon"
+          class="h-5 w-5 shrink-0"
+        />
         <span
           v-if="isExpanded"
           class="text-sm font-medium whitespace-nowrap"

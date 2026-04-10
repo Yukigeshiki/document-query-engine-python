@@ -1,5 +1,8 @@
 <template>
-  <div ref="container" class="w-full h-[500px] rounded-lg border border-border bg-card" />
+  <div
+    ref="container"
+    class="w-full h-[500px] rounded-lg border border-border bg-card"
+  />
 </template>
 
 <script setup lang="ts">

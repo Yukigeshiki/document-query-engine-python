@@ -35,15 +35,16 @@ _STATUS_MAP: dict[str, TaskStatus] = {
 @limiter.limit(settings.rate_limit_default)
 async def get_task_status(request: Request, task_id: str) -> TaskStatusResponse:
     """Poll the status of a background task."""
-    result = AsyncResult(task_id, app=celery_app)
+    result: AsyncResult[dict[str, Any]] = AsyncResult(task_id, app=celery_app)
 
     status = _STATUS_MAP.get(result.status, TaskStatus.PENDING)
 
-    task_result = None
+    task_result: SourceIngestResult | DeleteDocumentResult | None = None
     error = None
 
     if result.successful():
-        raw: dict[str, Any] = result.result
+        raw = result.result
+        assert isinstance(raw, dict)
         task_type = raw.get("task_type")
         if task_type == "delete_document":
             task_result = DeleteDocumentResult(**raw)

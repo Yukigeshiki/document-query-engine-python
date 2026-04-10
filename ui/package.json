@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@vueuse/core": "^13.9.0",
@@ -40,5 +41,11 @@
     "typescript-eslint": "^8.57.2",
     "vite": "^8.0.1",
     "vue-tsc": "^3.2.5"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "vue-demi"
+    ]
   }
 }

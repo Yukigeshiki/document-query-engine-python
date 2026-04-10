@@ -83,7 +83,8 @@ class TestGCSConnector:
 
         def fake_init(input_dir: str, **_: object) -> MagicMock:
             captured_input_dir["path"] = input_dir
-            return mock_reader_cls.return_value
+            reader: MagicMock = mock_reader_cls.return_value
+            return reader
 
         mock_reader_cls.side_effect = fake_init
 

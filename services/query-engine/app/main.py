@@ -16,8 +16,8 @@ from app.core.config import settings
 from app.core.error_handlers import register_error_handlers
 from app.core.gcs import get_gcs_client
 from app.core.logging import setup_logging
-from app.core.postgres import get_pg_engine
 from app.core.middleware import RequestContextMiddleware
+from app.core.postgres import get_pg_engine
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
 from app.services.knowledge_graph import KnowledgeGraphService
 from app.services.query_cache import create_query_cache
@@ -45,7 +45,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Handle application startup and shutdown events."""
     setup_logging()
     logger.info("starting", app_name=settings.app_name, version=settings.app_version)
-    pg_engine = get_pg_engine(settings.postgres_uri) if settings.postgres_enabled and settings.postgres_uri else None
+    pg_engine = None
+    if settings.postgres_enabled and settings.postgres_uri:
+        pg_engine = get_pg_engine(settings.postgres_uri)
     cache = create_query_cache(settings, engine=pg_engine)
     _app.state.kg_service = KnowledgeGraphService(
         settings, cache=cache, engine=pg_engine
@@ -80,6 +82,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
+        allow_origin_regex=settings.cors_origin_regex or None,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

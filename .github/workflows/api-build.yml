@@ -5,6 +5,10 @@ on:
     branches: [main]
     paths:
       - 'services/query-engine/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'services/query-engine/**'
 
 jobs:
   build:

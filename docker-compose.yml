@@ -1,3 +1,4 @@
+# Local development only — production auth and config are managed via Helm values.
 services:
   neo4j:
     image: neo4j:5.26

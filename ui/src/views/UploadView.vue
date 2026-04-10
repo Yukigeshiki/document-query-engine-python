@@ -3,16 +3,26 @@
     <div class="max-w-6xl mx-auto space-y-6">
       <div class="flex items-center justify-between">
         <div>
-          <h1 class="text-2xl font-bold">Upload Document</h1>
+          <h1 class="text-2xl font-bold">
+            Upload Document
+          </h1>
           <p class="text-muted-foreground mt-1">
             Upload a PDF, DOCX, or TXT file to ingest into the knowledge graph.
           </p>
         </div>
 
-        <Button v-if="status === 'success'" variant="outline" @click="reset">
+        <Button
+          v-if="status === 'success'"
+          variant="outline"
+          @click="reset"
+        >
           Upload Another
         </Button>
-        <Button v-if="status === 'failure'" variant="outline" @click="reset">
+        <Button
+          v-if="status === 'failure'"
+          variant="outline"
+          @click="reset"
+        >
           Try Again
         </Button>
       </div>
@@ -24,10 +34,13 @@
       />
 
       <!-- Upload button (shown after file selected) -->
-      <div v-if="status === 'idle' && file" class="flex gap-3">
+      <div
+        v-if="status === 'idle' && file"
+        class="flex gap-3"
+      >
         <button
-          @click="startUpload"
           class="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors"
+          @click="startUpload"
         >
           Upload & Ingest
         </button>
@@ -43,7 +56,10 @@
       />
 
       <!-- Delete error -->
-      <p v-if="deleteError" class="text-sm text-destructive">
+      <p
+        v-if="deleteError"
+        class="text-sm text-destructive"
+      >
         {{ deleteError }}
       </p>
 
@@ -59,10 +75,18 @@
         @load-more="loadMore"
       >
         <template #above-selected>
-          <div v-if="showGraph" class="space-y-4 my-3">
+          <div
+            v-if="showGraph"
+            class="space-y-4 my-3"
+          >
             <div class="flex items-center gap-3">
-              <h2 class="text-lg font-semibold">Knowledge Graph</h2>
-              <span v-if="isLoadingGraph" class="text-xs text-muted-foreground">Loading graph...</span>
+              <h2 class="text-lg font-semibold">
+                Knowledge Graph
+              </h2>
+              <span
+                v-if="isLoadingGraph"
+                class="text-xs text-muted-foreground"
+              >Loading graph...</span>
             </div>
 
             <!-- Entity search -->
@@ -72,24 +96,27 @@
                 placeholder="Search entity (e.g., Alice)..."
                 class="flex-1 px-3 py-2 border border-input rounded-md text-sm bg-background"
                 @keyup.enter="searchSubgraph"
-              />
+              >
               <button
-                @click="searchSubgraph"
                 :disabled="!searchEntity.trim()"
                 class="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+                @click="searchSubgraph"
               >
                 Focus
               </button>
               <button
-                @click="loadDocumentGraph"
                 class="px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-accent transition-colors"
+                @click="loadDocumentGraph"
               >
                 Reset
               </button>
             </div>
 
             <!-- Graph error -->
-            <p v-if="graphError" class="text-sm text-destructive">
+            <p
+              v-if="graphError"
+              class="text-sm text-destructive"
+            >
               {{ graphError }}
             </p>
 
@@ -100,7 +127,10 @@
               :edges="graphEdges"
             />
 
-            <p v-else-if="!isLoadingGraph && !graphError" class="text-sm text-muted-foreground">
+            <p
+              v-else-if="!isLoadingGraph && !graphError"
+              class="text-sm text-muted-foreground"
+            >
               No graph data available. The knowledge graph may be empty.
             </p>
           </div>

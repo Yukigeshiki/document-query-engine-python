@@ -16,7 +16,9 @@ from app.models.knowledge_graph import SourceType
 def mock_upload_service() -> AsyncMock:
     """Create a mock UploadService."""
     service = AsyncMock()
-    service.save.return_value = (SourceType.GCS, {"bucket": "test-bucket", "prefix": "uploads/abc/"})
+    service.save.return_value = (
+        SourceType.GCS, {"bucket": "test-bucket", "prefix": "uploads/abc/"}
+    )
     return service
 
 

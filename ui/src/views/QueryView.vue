@@ -2,7 +2,9 @@
   <AppLayout>
     <div class="max-w-6xl mx-auto space-y-6">
       <div>
-        <h1 class="text-2xl font-bold">Query Your Documents</h1>
+        <h1 class="text-2xl font-bold">
+          Query Your Documents
+        </h1>
         <p class="text-muted-foreground mt-1">
           Ask questions about the data in your documents.
         </p>
@@ -16,34 +18,49 @@
           class="flex-1 px-3 py-2 border border-input rounded-md text-sm bg-background"
           :disabled="isLoading"
           @keydown.enter="submitQuery"
-        />
-        <Select v-model="retrievalMode" :disabled="isLoading">
+        >
+        <Select
+          v-model="retrievalMode"
+          :disabled="isLoading"
+        >
           <SelectTrigger class="w-36">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="dual">Dual</SelectItem>
-            <SelectItem value="kg_only">KG Only</SelectItem>
-            <SelectItem value="vector_only">Vector Only</SelectItem>
+            <SelectItem value="dual">
+              Dual
+            </SelectItem>
+            <SelectItem value="kg_only">
+              KG Only
+            </SelectItem>
+            <SelectItem value="vector_only">
+              Vector Only
+            </SelectItem>
           </SelectContent>
         </Select>
         <button
-          @click="submitQuery"
           :disabled="!query.trim() || isLoading"
           class="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+          @click="submitQuery"
         >
           Ask
         </button>
       </div>
 
       <!-- Loading -->
-      <div v-if="isLoading" class="flex items-center gap-3 rounded-lg border border-border p-6">
+      <div
+        v-if="isLoading"
+        class="flex items-center gap-3 rounded-lg border border-border p-6"
+      >
         <Loader2 class="h-5 w-5 animate-spin text-primary" />
         <span class="text-sm font-medium">Querying your documents...</span>
       </div>
 
       <!-- Error -->
-      <p v-if="error" class="text-sm text-destructive">
+      <p
+        v-if="error"
+        class="text-sm text-destructive"
+      >
         {{ error }}
       </p>
 

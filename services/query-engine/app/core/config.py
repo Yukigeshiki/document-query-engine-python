@@ -20,7 +20,8 @@ class Settings(BaseSettings):
     port: int = 8000
     workers: int = 1
 
-    cors_origins: list[str] = ["*"]
+    cors_origins: list[str] = []
+    cors_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 
     # OpenAI
     openai_api_key: str = ""

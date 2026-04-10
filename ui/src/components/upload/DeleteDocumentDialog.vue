@@ -1,5 +1,8 @@
 <template>
-  <AlertDialog :open="doc !== null" @update:open="onOpenChange">
+  <AlertDialog
+    :open="doc !== null"
+    @update:open="onOpenChange"
+  >
     <AlertDialogContent>
       <AlertDialogTitle>Delete document</AlertDialogTitle>
       <AlertDialogDescription>
@@ -9,7 +12,9 @@
       </AlertDialogDescription>
       <div class="flex justify-end gap-3 mt-2">
         <AlertDialogCancel>Cancel</AlertDialogCancel>
-        <AlertDialogAction @click="onConfirm">Delete</AlertDialogAction>
+        <AlertDialogAction @click="onConfirm">
+          Delete
+        </AlertDialogAction>
       </div>
     </AlertDialogContent>
   </AlertDialog>

@@ -36,7 +36,9 @@ def _get_kg_service() -> KnowledgeGraphService:
     if _kg_service is None:
         setup_logging()
         logger.info("initializing_kg_service_in_worker")
-        pg_engine = get_pg_engine(settings.postgres_uri) if settings.postgres_enabled and settings.postgres_uri else None
+        pg_engine = None
+        if settings.postgres_enabled and settings.postgres_uri:
+            pg_engine = get_pg_engine(settings.postgres_uri)
         cache = create_query_cache(settings, engine=pg_engine)
         _kg_service = KnowledgeGraphService(
             settings, cache=cache, engine=pg_engine
@@ -47,7 +49,7 @@ def _get_kg_service() -> KnowledgeGraphService:
     return _kg_service
 
 
-@celery_app.task(name="ingest_source")  # type: ignore[untyped-decorator]
+@celery_app.task(name="ingest_source")
 def ingest_source_task(
     source_type: str,
     config: dict[str, Any],
@@ -122,7 +124,7 @@ UPLOADS_MAX_AGE_SECONDS = 24 * 60 * 60  # 24 hours
 UPLOADS_PREFIX = "uploads/"
 
 
-@celery_app.task(name="cleanup_uploads")  # type: ignore[untyped-decorator]
+@celery_app.task(name="cleanup_uploads")
 def cleanup_uploads_task() -> dict[str, Any]:
     """Remove uploaded files older than 24 hours from GCS."""
     deleted = _cleanup_gcs_uploads()

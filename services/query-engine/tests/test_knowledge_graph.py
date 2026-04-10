@@ -9,7 +9,6 @@ from httpx import ASGITransport, AsyncClient
 from app.dependencies import get_kg_service
 from app.main import create_app
 from app.models.knowledge_graph import (
-    DocumentInfo,
     RetrievalMode,
     SourceNodeInfo,
     SourceNodeMetadata,
@@ -25,7 +24,11 @@ def mock_kg_service() -> AsyncMock:
     service = AsyncMock()
     service.query.return_value = (
         "Test response about the topic.",
-        [SourceNodeInfo(source_type=SourceRetrievalType.VECTOR, score=0.9, metadata=SourceNodeMetadata(file_name="test.txt"))],
+        [SourceNodeInfo(
+            source_type=SourceRetrievalType.VECTOR,
+            score=0.9,
+            metadata=SourceNodeMetadata(file_name="test.txt"),
+        )],
     )
     service.get_subgraph.return_value = (
         [SubgraphNode(id="Alice"), SubgraphNode(id="Acme Corp", label="Organization")],
@@ -137,7 +140,9 @@ async def test_list_documents(kg_client: AsyncClient, mock_kg_service: AsyncMock
 
 
 @pytest.mark.asyncio
-async def test_list_documents_pagination(kg_client: AsyncClient, mock_kg_service: AsyncMock) -> None:
+async def test_list_documents_pagination(
+    kg_client: AsyncClient, mock_kg_service: AsyncMock
+) -> None:
     """Verify list documents accepts limit and offset params."""
     response = await kg_client.get(
         "/api/v1/kg/documents",
@@ -189,7 +194,7 @@ async def test_subgraph_missing_entity(kg_client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_delete_document_accepted(kg_client: AsyncClient, mock_kg_service: AsyncMock) -> None:
     """Verify delete endpoint returns 202 with a task ID when the doc exists."""
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock, patch
 
     mock_kg_service.document_exists.return_value = True
 
