@@ -86,7 +86,7 @@ The UI provides a query page for asking questions about your documents and an up
 
 ### Scaling the worker
 
-The Celery worker uses the prefork pool with process-level concurrency. Each worker process has its own KG service, Neo4j driver, postgres engine, and LlamaIndex indexes - process isolation gives crash isolation and avoids races in LlamaIndex internals.
+The Celery worker uses the prefork pool with process-level concurrency. Each worker process has its own KG service, Neo4j driver, postgres engine, and vector index - process isolation gives crash isolation and avoids races in LlamaIndex internals.
 
 - **Vertical** - tune the `CELERY_WORKER_CONCURRENCY` env var (default `4`) to change the number of worker processes per container. `WORKER_MAX_TASKS_PER_CHILD` (default `100`) recycles processes to bound memory leaks.
 - **Horizontal** - run multiple worker containers behind the same Redis broker.
@@ -153,4 +153,5 @@ poetry run uvicorn app.main:create_app --factory --reload  # run
 pnpm install    # install dependencies
 pnpm dev        # dev server
 pnpm build      # production build
+pnpm lint       # eslint
 ```
